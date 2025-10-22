@@ -12,7 +12,7 @@ st.set_page_config(page_title="NBA Player Prop Parlay Builder", page_icon="🏀"
 st.title("🏀 NBA Player Prop Parlay Builder")
 
 # =========================
-# DARK THEME + CLEAN INPUT FIX
+# DARK THEME + CLEAN INPUTS (no focus bubbles)
 # =========================
 st.markdown("""
 <style>
@@ -27,7 +27,7 @@ st.markdown("""
 
 body, .block-container { background: var(--bg); color: var(--text); }
 
-/* Buttons */
+/* Action buttons */
 .stButton > button {
   background: var(--accent) !important;
   color: #0b1220 !important;
@@ -49,7 +49,7 @@ body, .block-container { background: var(--bg); color: var(--text); }
   color: var(--text) !important;
 }
 
-/* Inputs: matte look */
+/* Base inputs */
 input, select, textarea {
   background: #202225 !important;
   color: var(--text) !important;
@@ -58,21 +58,27 @@ input, select, textarea {
   box-shadow: none !important;
 }
 
-/* Remove dropdown / input focus bubbles */
-.stSelectbox [data-baseweb="select"] > div:focus,
-.stSelectbox [data-baseweb="select"] > div:focus-within,
-.stTextInput input:focus,
-.stNumberInput input:focus {
-    outline: none !important;
-    box-shadow: none !important;
-    border-color: #3b3f45 !important;
-}
-.stSelectbox [data-baseweb="select"]:focus-within {
-    border-color: #3b3f45 !important;
-    box-shadow: none !important;
+/* KILL all focus rings inside the main content to remove the "bubbles" */
+.block-container *:focus,
+.block-container *:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
-/* Cards */
+/* Streamlit specific widgets */
+.stSelectbox [data-baseweb="select"] *:focus,
+.stSelectbox [data-baseweb="select"] *:focus-visible { 
+  outline: none !important; box-shadow: none !important; 
+}
+.stTextInput input:focus,
+.stNumberInput input:focus { 
+  outline: none !important; box-shadow: none !important; 
+}
+.stNumberInput button:focus { 
+  outline: none !important; box-shadow: none !important; 
+}
+
+/* Result cards */
 .card {
   --pad-x: 28px; --pad-y: 22px;
   padding: var(--pad-y) var(--pad-x);
@@ -131,8 +137,7 @@ def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
     if not dfs: return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
     for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
-        if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
+        if k in df.columns: df[k] = pd.to_numeric(df[k], errors="coerce")
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     if "GAME_DATE" in df.columns:
         df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
@@ -150,7 +155,8 @@ def prob_to_american(p: float):
     if p<=0 or p>=1: return "N/A"
     return f"{int(round((-100*p/(1-p)) if p>0.5 else (100*(1-p)/p))):+}"
 
-def calc_prob(df: pd.DataFrame, stat: str, thr: int, min_minutes: int, loc_filter: str, range_key: str):
+def calc_prob(df: pd.DataFrame, stat: str, thr: int, min_minutes: int, loc_filter: str, range_key: str, direction: str):
+    """direction: 'Over (≥)' or 'Under (≤)'"""
     if df.empty: return 0.0,0,0,df
     d = df.copy()
     d = d[d["MIN_NUM"] >= min_minutes]
@@ -163,11 +169,14 @@ def calc_prob(df: pd.DataFrame, stat: str, thr: int, min_minutes: int, loc_filte
     elif range_key == "L20": d = d.head(20)
     total = len(d)
     if total==0 or stat not in d.columns: return 0.0,0,total,d
-    hits = (d[stat] >= thr).sum()
+    if direction.startswith("Under"):
+        hits = (d[stat] <= thr).sum()
+    else:
+        hits = (d[stat] >= thr).sum()
     return hits/total, int(hits), int(total), d
 
 # =========================
-# SIDEBAR
+# SIDEBAR FILTERS
 # =========================
 with st.sidebar:
     st.subheader("⚙️ Filters")
@@ -176,42 +185,58 @@ with st.sidebar:
     min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1)
 
 # =========================
-# LEGS
+# LEGS STATE
 # =========================
 if "legs" not in st.session_state:
     st.session_state.legs = [{
-        "player":"", "stat":"PTS", "thr":10, "odds":-110, "loc":"All", "range":"FULL"
+        "player":"", "stat":"PTS", "thr":10, "odds":-110, "loc":"All", "range":"FULL", "dir":"Over (≥)"
     }]
 
+# =========================
+# ADD / REMOVE (centered)
+# =========================
 pad_l, add_c, rem_c, pad_r = st.columns([1,1,1,1])
 with add_c:
     if st.button("➕ Add Leg"):
-        st.session_state.legs.append({"player":"", "stat":"PTS", "thr":10, "odds":-110, "loc":"All", "range":"FULL"})
+        st.session_state.legs.append({
+            "player":"", "stat":"PTS", "thr":10, "odds":-110, "loc":"All", "range":"FULL", "dir":"Over (≥)"
+        })
 with rem_c:
     if st.button("➖ Remove Leg") and len(st.session_state.legs)>1:
         st.session_state.legs.pop()
 
-stat_keys = list(STAT_LABELS.keys())
-loc_opts = ["All","Home Only","Away Only"]
+# =========================
+# LEG GRID: 3 per row; each expander = 2×3 inputs
+# =========================
+stat_keys  = list(STAT_LABELS.keys())
+loc_opts   = ["All","Home Only","Away Only"]
 range_opts = ["FULL","L10","L20"]
+dir_opts   = ["Over (≥)", "Under (≤)"]
 
 def render_leg(idx: int, leg: dict, container):
     with container.expander(f"Leg {idx+1}", expanded=True):
         left, right = st.columns(2)
+        # Left column: Player → Home/Away → Game Range
         with left:
             leg["player"] = st.text_input("Player", value=leg.get("player",""), key=f"p_{idx}")
             leg["loc"]    = st.selectbox("Home/Away", loc_opts,
                                          index=loc_opts.index(leg.get("loc","All")), key=f"l_{idx}")
             leg["range"]  = st.selectbox("Game Range", range_opts,
                                          index=range_opts.index(leg.get("range","FULL")), key=f"r_{idx}")
+        # Right column: Stat → Direction+Threshold → Odds
         with right:
-            stat_default = leg.get("stat","PTS")
-            leg["stat"]  = st.selectbox("Stat", stat_keys,
-                                        index=stat_keys.index(stat_default) if stat_default in stat_keys else 0,
-                                        format_func=lambda k: STAT_LABELS[k],
-                                        key=f"s_{idx}")
-            leg["thr"]   = st.number_input("Threshold (≥)", min_value=0, max_value=100,
-                                           value=int(leg.get("thr",10)), key=f"t_{idx}")
+            stat_default  = leg.get("stat","PTS")
+            leg["stat"]   = st.selectbox("Stat", stat_keys,
+                                         index=stat_keys.index(stat_default) if stat_default in stat_keys else 0,
+                                         format_func=lambda k: STAT_LABELS[k],
+                                         key=f"s_{idx}")
+            c_rt, c_od = st.columns([1,1])
+            with c_rt:
+                leg["dir"] = st.selectbox("Direction", dir_opts,
+                                          index=dir_opts.index(leg.get("dir","Over (≥)")), key=f"d_{idx}")
+            with c_od:
+                leg["thr"] = st.number_input("Threshold", min_value=0, max_value=100,
+                                             value=int(leg.get("thr",10)), key=f"t_{idx}")
             leg["odds"]  = st.number_input("FanDuel Odds", min_value=-10000, max_value=10000,
                                            value=int(leg.get("odds",-110)), step=5, key=f"o_{idx}")
 
@@ -222,14 +247,22 @@ for i in range(0, len(st.session_state.legs), 3):
         if k < len(st.session_state.legs):
             render_leg(k, st.session_state.legs[k], cols[j])
 
+# Parlay odds in sidebar when >1 leg
+parlay_odds = 0
+if len(st.session_state.legs) > 1:
+    st.sidebar.markdown("---")
+    parlay_odds = st.sidebar.number_input("Combined Parlay Odds (+300, -150, ...)", value=0, step=5, key="parlay_odds")
+
 # =========================
 # COMPUTE
 # =========================
 if st.button("Compute"):
     st.markdown("---")
+
     rows = []
     probs_for_parlay = []
 
+    # Dark theming for plots
     plt.rcParams.update({
         "axes.facecolor": "#1e1f22",
         "figure.facecolor": "#1e1f22",
@@ -245,6 +278,7 @@ if st.button("Compute"):
         stat = leg["stat"]; thr = int(leg["thr"]); book = int(leg["odds"])
         loc_key = leg.get("loc","All")
         range_key = leg.get("range","FULL")
+        direction = leg.get("dir","Over (≥)")
 
         pid = get_player_id(name) if name else None
         if not pid:
@@ -252,7 +286,7 @@ if st.button("Compute"):
             continue
 
         df = fetch_gamelog(pid, seasons)
-        p, hits, total, df_filt = calc_prob(df, stat, thr, min_minutes, loc_key, range_key)
+        p, hits, total, df_filt = calc_prob(df, stat, thr, min_minutes, loc_key, range_key, direction)
         fair = prob_to_american(p)
         book_prob = american_to_implied(book)
         ev = None if book_prob is None else (p - book_prob) * 100.0
@@ -261,12 +295,13 @@ if st.button("Compute"):
         rows.append({
             "ok":True, "name":name, "stat":stat, "thr":thr, "book":book,
             "p":p, "hits":hits, "total":total, "fair":fair, "book_prob":book_prob,
-            "ev":ev, "df":df_filt, "loc":loc_key, "range":range_key
+            "ev":ev, "df":df_filt, "loc":loc_key, "range":range_key, "dir":direction
         })
 
+    # ---------- Combined Parlay ----------
     combined_p = float(np.prod(probs_for_parlay)) if probs_for_parlay else 0.0
     combined_fair = prob_to_american(combined_p) if combined_p>0 else "N/A"
-    entered_prob = american_to_implied(0)
+    entered_prob = american_to_implied(parlay_odds)
     parlay_ev = None if entered_prob is None else (combined_p - entered_prob) * 100.0
     cls = "neutral"
     if parlay_ev is not None: cls = "pos" if parlay_ev >= 0 else "neg"
@@ -275,5 +310,68 @@ if st.button("Compute"):
 <div class="card {cls}">
   <h2>💥 Combined Parlay — {', '.join(seasons) if seasons else '—'}</h2>
   <div class="cond">Includes all selected legs with their individual filters</div>
+  <div class="row">
+    <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_p*100:.2f}%</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
+    <div class="m"><div class="lab">Entered Parlay Odds</div><div class="val">{parlay_odds if parlay_odds else '—'}</div></div>
+    <div class="m"><div class="lab">Book Implied</div><div class="val">{'—' if entered_prob is None else f'{entered_prob*100:.2f}%'}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{'—' if parlay_ev is None else f'{parlay_ev:.2f}%'}</div></div>
+  </div>
+  <div class="chip">{'🔥 +EV Parlay Detected' if (parlay_ev is not None and parlay_ev>=0) else ('⚠️ Negative EV Parlay' if parlay_ev is not None else 'ℹ️ Enter parlay odds')}</div>
 </div>
 """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ---------- Individual Legs ----------
+    for r in rows:
+        if not r.get("ok"):
+            st.warning(f"Could not find player: **{r['name']}**")
+            continue
+
+        cls = "neutral"
+        if r["ev"] is not None:
+            cls = "pos" if r["ev"] >= 0 else "neg"
+
+        stat_label = STAT_LABELS.get(r["stat"], r["stat"])
+        book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
+        ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
+
+        # condition text (includes Over/Under, loc, range)
+        dir_word = "over" if r["dir"].startswith("Over") else "under"
+        cond_bits = [f"{dir_word} {r['thr']} {stat_label.lower()}"]
+        if r.get("loc") and r["loc"] != "All":
+            cond_bits.append(r["loc"].replace(" Only","").lower())
+        if r.get("range") == "L10":
+            cond_bits.append("last 10")
+        elif r.get("range") == "L20":
+            cond_bits.append("last 20")
+        else:
+            cond_bits.append("full season")
+        cond_text = " — ".join(cond_bits)
+
+        st.markdown(f"""
+<div class="card {cls}">
+  <h2>{r['name']} — {', '.join(seasons) if seasons else '—'}</h2>
+  <div class="cond">Condition: {cond_text}</div>
+  <div class="row">
+    <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{r['fair']}</div></div>
+    <div class="m"><div class="lab">FanDuel Odds</div><div class="val">{r['book']}</div></div>
+    <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
+  </div>
+  <div class="chip">{'🔥 +EV Play Detected (by your model)' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
+</div>
+""", unsafe_allow_html=True)
+
+        # Histogram
+        df_f = r["df"]
+        if not df_f.empty and r["stat"] in df_f.columns:
+            fig, ax = plt.subplots()
+            ax.hist(df_f[r["stat"]], bins=20, edgecolor="white",
+                    color=("#00c896" if (r["ev"] is not None and r["ev"]>=0) else "#e05a5a"))
+            ax.axvline(r["thr"], color="w", linestyle="--", label=f"Threshold {r['thr']}")
+            ax.set_title(f"{r['name']} — {stat_label}")
+            ax.set_xlabel(stat_label); ax.set_ylabel("Games"); ax.legend()
+            st.pyplot(fig)
