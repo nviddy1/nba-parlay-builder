@@ -6,279 +6,193 @@ from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
 
 st.set_page_config(page_title="NBA Parlay Builder", layout="wide")
-
 st.title("🏀 NBA Parlay Builder (add as many legs as you like)")
 
 # -----------------------------
 # Helpers
 # -----------------------------
-def get_player_id(name: str):
+def get_player_id(name):
     result = players.find_players_by_full_name(name)
     return result[0]["id"] if result else None
 
-def get_player_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
+def get_player_gamelog(player_id, seasons):
     dfs = []
-    for season in seasons:
+    for s in seasons:
         try:
-            g = playergamelog.PlayerGameLog(player_id=player_id, season=season).get_data_frames()[0]
-            dfs.append(g)
+            df = playergamelog.PlayerGameLog(player_id=player_id, season=s).get_data_frames()[0]
+            dfs.append(df)
         except Exception:
             pass
     if not dfs:
         return pd.DataFrame()
-    df = pd.concat(dfs, ignore_index=True)
-    df = df.astype(
-        {
-            "PTS": float,
-            "REB": float,
-            "AST": float,
-            "STL": float,
-            "BLK": float,
-            "FG3M": float,
-            "MIN": float,
-        },
-        errors="ignore",
-    )
+    df = pd.concat(dfs)
+    df = df.astype({"PTS": float, "REB": float, "AST": float, "STL": float, "BLK": float, "FG3M": float, "MIN": float}, errors="ignore")
     return df
 
-def calculate_probability(df: pd.DataFrame, stat: str, threshold: int, home_only=None, min_minutes=20):
+def calculate_probability(df, stat, threshold, home_only=None, min_minutes=20):
     if df.empty:
-        return 0.0, 0, 0, df
+        return 0, 0, 0
     df = df[df["MIN"] >= min_minutes]
-    if home_only is not None:
-        if home_only:
-            df = df[df["MATCHUP"].str.contains("vs.")]
-        else:
-            df = df[df["MATCHUP"].str.contains("@")]
+    if home_only is True:
+        df = df[df["MATCHUP"].str.contains("vs.")]
+    elif home_only is False:
+        df = df[df["MATCHUP"].str.contains("@")]
     total = len(df)
     if total == 0:
-        return 0.0, 0, 0, df
+        return 0, 0, 0
     hits = (df[stat] >= threshold).sum()
-    prob = hits / total
-    return prob, hits, total, df
+    return hits / total, hits, total
 
-def prob_to_american(prob: float):
+def prob_to_american(prob):
     if prob <= 0 or prob >= 1:
         return "N/A"
     if prob > 0.5:
-        odds = -100 * prob / (1 - prob)
+        return int(-100 * prob / (1 - prob))
     else:
-        odds = 100 * (1 - prob) / prob
-    return f"{int(round(odds)):+}"
+        return int((1 - prob) / prob * 100)
 
-def american_to_implied(odds: int | float) -> float:
-    """Return implied probability from American odds."""
-    if odds == 0:
-        return None  # caller must handle None
+def american_to_implied(odds):
+    if odds == 0 or odds is None:
+        return None
+    try:
+        odds = float(odds)
+    except:
+        return None
     if odds > 0:
         return 100 / (odds + 100)
     else:
         return abs(odds) / (abs(odds) + 100)
 
 # -----------------------------
-# Sidebar
+# Sidebar Filters
 # -----------------------------
 st.sidebar.header("Filters")
 season_options = ["2024-25", "2023-24", "2022-23"]
-selected_seasons = st.sidebar.multiselect("Seasons to include", season_options, default=["2024-25"])
-min_minutes = st.sidebar.slider("Minimum Minutes Played", 0, 40, 20, 1)
-home_filter = st.sidebar.selectbox("Game Location", ["All", "Home Only", "Away Only"])
+selected_seasons = st.sidebar.multiselect("Seasons", season_options, default=["2024-25"])
+min_minutes = st.sidebar.slider("Min Minutes", 0, 40, 20)
+home_filter = st.sidebar.selectbox("Game Location", ["All", "Home", "Away"])
 
 # -----------------------------
-# Leg state + controls
+# Manage Legs
 # -----------------------------
 if "legs" not in st.session_state:
-    st.session_state.legs = [{"player": "", "stat": "PTS", "threshold": 10, "fanduel_odds": -110}]
+    st.session_state.legs = [{"player": "", "stat": "PTS", "threshold": 10, "odds": -110}]
 
-col1, col2 = st.columns([1, 1])
+col1, col2 = st.columns(2)
 with col1:
     if st.button("➕ Add Leg"):
-        st.session_state.legs.append({"player": "", "stat": "PTS", "threshold": 10, "fanduel_odds": -110})
+        st.session_state.legs.append({"player": "", "stat": "PTS", "threshold": 10, "odds": -110})
 with col2:
     if st.button("➖ Remove Leg") and len(st.session_state.legs) > 1:
         st.session_state.legs.pop()
 
-stat_options = {
-    "PTS": "Points",
-    "REB": "Rebounds",
-    "AST": "Assists",
-    "STL": "Steals",
-    "BLK": "Blocks",
-    "FG3M": "3PM",
-}
+stat_options = {"PTS": "Points", "REB": "Rebounds", "AST": "Assists", "STL": "Steals", "BLK": "Blocks", "FG3M": "3PM"}
 
 for i, leg in enumerate(st.session_state.legs):
     with st.expander(f"Leg {i+1}", expanded=True):
         leg["player"] = st.text_input(f"Player {i+1}", leg["player"], key=f"player_{i}")
-        leg["stat"] = st.selectbox(
-            f"Stat {i+1}", list(stat_options.keys()), format_func=lambda x: stat_options[x], key=f"stat_{i}"
-        )
-        leg["threshold"] = st.number_input(
-            f"Threshold {i+1} (≥)", min_value=0, max_value=100, value=leg["threshold"], step=1, key=f"thresh_{i}"
-        )
-        leg["fanduel_odds"] = st.number_input(
-            f"FanDuel Odds {i+1}", value=leg["fanduel_odds"], step=5, key=f"odds_{i}"
-        )
+        leg["stat"] = st.selectbox(f"Stat {i+1}", list(stat_options.keys()), format_func=lambda x: stat_options[x], key=f"stat_{i}")
+        leg["threshold"] = st.number_input(f"Threshold (≥)", 0, 100, leg["threshold"], key=f"thr_{i}")
+        leg["odds"] = st.number_input(f"FanDuel Odds", -1000, 1000, leg["odds"], key=f"odds_{i}")
 
 # -----------------------------
-# Compute
+# Compute Results
 # -----------------------------
 if st.button("Compute"):
-    # First compute all legs silently so we can show the parlay summary FIRST
-    rows = []
-    all_model_probs = []
-    all_book_probs = []
-
-    # Decide location filter
-    home_only = None
-    if home_filter == "Home Only":
-        home_only = True
-    elif home_filter == "Away Only":
-        home_only = False
-
-    for leg in st.session_state.legs:
-        player_name = leg["player"].strip()
-        stat = leg["stat"]
-        threshold = int(leg["threshold"])
-        book_odds = int(leg["fanduel_odds"])
-
-        player_id = get_player_id(player_name)
-        if not player_id:
-            # Store a stub row so the UI keeps order; skip probability
-            rows.append(
-                {
-                    "player": player_name,
-                    "stat": stat,
-                    "threshold": threshold,
-                    "hits": 0,
-                    "total": 0,
-                    "prob": 0.0,
-                    "fair_odds": "N/A",
-                    "book_odds": book_odds,
-                    "book_implied": american_to_implied(book_odds),
-                    "ev": -999,  # force red card
-                    "df": pd.DataFrame(),
-                }
-            )
-            continue
-
-        df = get_player_gamelog(player_id, selected_seasons)
-        prob, hits, total, filtered_df = calculate_probability(df, stat, threshold, home_only, min_minutes)
-        fair_odds = prob_to_american(prob)
-        book_implied = american_to_implied(book_odds)
-
-        # EV in percentage points
-        ev = None if book_implied is None else (prob - book_implied) * 100
-
-        if prob > 0:
-            all_model_probs.append(prob)
-        if book_implied is not None:
-            all_book_probs.append(book_implied)
-
-        rows.append(
-            {
-                "player": player_name,
-                "stat": stat,
-                "threshold": threshold,
-                "hits": hits,
-                "total": total,
-                "prob": prob,
-                "fair_odds": fair_odds,
-                "book_odds": book_odds,
-                "book_implied": book_implied,
-                "ev": ev if ev is not None else -999,
-                "df": filtered_df,
-            }
-        )
-
-    # ===== Combined Parlay Summary FIRST =====
-    st.subheader("💥 Combined Parlay Summary")
-
-    # Model parlay prob = product of leg probs (only those > 0)
-    combined_prob = np.prod(all_model_probs) if all_model_probs else 0.0
-    combined_fair_odds = prob_to_american(combined_prob) if combined_prob > 0 else "N/A"
-
-    # Input: user-entered combined parlay odds
-    parlay_odds = st.number_input("Enter Combined Parlay Odds (e.g., +300, -150)", value=0, step=5)
-    parlay_book_prob = american_to_implied(parlay_odds)  # None if 0
-    parlay_ev = None if parlay_book_prob is None else (combined_prob - parlay_book_prob) * 100
-
-    # Colors (neutral if EV not computable yet)
-    if parlay_ev is None:
-        color = "#1f2937"        # neutral
-        border_color = "#64748b"
-        emoji = "ℹ️"
-    else:
-        color = "#0b3d23" if parlay_ev >= 0 else "#3d0b0b"
-        border_color = "#00FF99" if parlay_ev >= 0 else "#FF5555"
-        emoji = "🔥" if parlay_ev >= 0 else "⚠️"
-
-    book_implied_str = f"{parlay_book_prob*100:.2f}%" if parlay_book_prob is not None else "—"
-    ev_str = f"{parlay_ev:.2f}%" if parlay_ev is not None else "—"
-    ev_bar = min(abs(parlay_ev), 100) if parlay_ev is not None else 0
-
-    st.markdown(
-        f"""
-        <div style='background-color:{color};padding:25px;border-radius:15px;border:1px solid {border_color};margin-bottom:25px;'>
-            <h2 style='color:white;'>Combined Parlay — <span style='color:#9AE6B4;'>{", ".join(selected_seasons) if selected_seasons else "—"}</span></h2>
-            <p><b>Model Parlay Probability:</b> {combined_prob*100:.2f}%</p>
-            <p><b>Model Fair Odds:</b> {combined_fair_odds}</p>
-            <p><b>Entered Parlay Odds:</b> {parlay_odds if parlay_odds != 0 else "—"}</p>
-            <p><b>Book Implied:</b> {book_implied_str}</p>
-            <p><b>Expected Value:</b> <span style='font-size:22px;color:#00FF99;'>{ev_str}</span></p>
-            <div style='height:10px;background-color:#333;border-radius:10px;'>
-                <div style='height:10px;width:{ev_bar}%;background-color:{border_color};border-radius:10px;'></div>
-            </div>
-            <p style='margin-top:10px;font-size:17px;color:white;'>{emoji} <b>{'+EV Parlay Detected' if (parlay_ev is not None and parlay_ev >= 0) else ('Negative EV Parlay' if parlay_ev is not None else 'Enter parlay odds above')}</b></p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     st.markdown("---")
 
-    # ===== Individual Legs (cards + histograms) =====
-    for leg in rows:
-        ev = leg["ev"]
-        is_pos = ev is not None and ev >= 0
-        color = "#0b3d23" if is_pos else "#3d0b0b"
-        border_color = "#00FF99" if is_pos else "#FF5555"
-        emoji = "🔥" if is_pos else "⚠️"
-        ev_str_leg = "—" if ev == -999 or ev is None else f"{ev:.2f}%"
-        ev_bar_leg = 0 if ev == -999 or ev is None else min(abs(ev), 100)
+    legs = st.session_state.legs
+    all_probs = []
+    results = []
 
-        st.markdown(
-            f"""
-            <div style='background-color:{color};padding:20px;border-radius:15px;margin-bottom:20px;border:1px solid {border_color};'>
-                <h3 style='color:white;'>{leg["player"] or "Unknown Player"} — <span style='color:#9AE6B4;'>{", ".join(selected_seasons) if selected_seasons else "—"}</span></h3>
-                <p><b>Condition:</b> {leg["threshold"]}+ {stat_options[leg["stat"]].lower()}</p>
-                <p><b>Model Hit Rate:</b> {(leg["prob"]*100):.1f}% ({leg["hits"]}/{leg["total"]})</p>
-                <p><b>Model Fair Odds:</b> {leg["fair_odds"]}</p>
-                <p><b>FanDuel Odds:</b> {leg["book_odds"]}</p>
-                <p><b>Book Implied:</b> {f'{leg["book_implied"]*100:.1f}%' if leg["book_implied"] is not None else "—"}</p>
-                <p><b>Expected Value:</b> <span style='font-size:22px;color:#00FF99;'>{ev_str_leg}</span></p>
-                <div style='height:10px;background-color:#333;border-radius:10px;'>
-                    <div style='height:10px;width:{ev_bar_leg}%;background-color:{border_color};border-radius:10px;'></div>
-                </div>
-                <p style='margin-top:10px;font-size:17px;color:white;'>{emoji} <b>{'+EV Play Detected' if is_pos else 'Negative EV Play'}</b></p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    home_only = None
+    if home_filter == "Home":
+        home_only = True
+    elif home_filter == "Away":
+        home_only = False
 
-        # Histogram (only if df has the stat)
-        df_hist = leg["df"]
-        if not df_hist.empty and leg["stat"] in df_hist.columns:
+    for leg in legs:
+        pid = get_player_id(leg["player"])
+        if not pid:
+            continue
+        df = get_player_gamelog(pid, selected_seasons)
+        prob, hits, total = calculate_probability(df, leg["stat"], leg["threshold"], home_only, min_minutes)
+        fair_odds = prob_to_american(prob)
+        implied = american_to_implied(leg["odds"])
+        ev = None if implied is None else (prob - implied) * 100
+        results.append({
+            "player": leg["player"],
+            "stat": leg["stat"],
+            "threshold": leg["threshold"],
+            "prob": prob,
+            "hits": hits,
+            "total": total,
+            "fair_odds": fair_odds,
+            "odds": leg["odds"],
+            "implied": implied,
+            "ev": ev
+        })
+        if prob > 0:
+            all_probs.append(prob)
+
+    # -----------------------------
+    # Combined Parlay Summary (top)
+    # -----------------------------
+    st.subheader("💥 Combined Parlay Summary")
+
+    combined_prob = np.prod(all_probs) if all_probs else 0
+    fair_odds = prob_to_american(combined_prob)
+    parlay_odds = st.number_input("Enter Combined Parlay Odds (e.g. +300, -150)", value=0, step=5, key="parlay_odds")
+
+    implied = american_to_implied(parlay_odds)
+    parlay_ev = (combined_prob - implied) * 100 if implied else None
+
+    # Style colors
+    color = "#0b3d23" if (parlay_ev and parlay_ev >= 0) else "#3d0b0b" if parlay_ev else "#222"
+    border = "#00FF99" if (parlay_ev and parlay_ev >= 0) else "#FF5555" if parlay_ev else "#888"
+    emoji = "🔥" if (parlay_ev and parlay_ev >= 0) else "⚠️" if parlay_ev else "ℹ️"
+
+    implied_str = f"{implied*100:.2f}%" if implied else "—"
+    ev_str = f"{parlay_ev:.2f}%" if parlay_ev else "—"
+
+    st.markdown(f"""
+    <div style='background-color:{color};padding:25px;border-radius:15px;border:1px solid {border};margin-bottom:25px;'>
+        <h2 style='color:white;'>Combined Parlay</h2>
+        <p><b>Model Probability:</b> {combined_prob*100:.2f}%</p>
+        <p><b>Model Fair Odds:</b> {fair_odds}</p>
+        <p><b>Entered Odds:</b> {parlay_odds}</p>
+        <p><b>Book Implied:</b> {implied_str}</p>
+        <p><b>Expected Value:</b> {ev_str}</p>
+        <p style='font-size:17px;color:white;'>{emoji} <b>{'+EV Parlay' if parlay_ev and parlay_ev >= 0 else ('Negative EV Parlay' if parlay_ev else 'Enter parlay odds to calculate')}</b></p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # -----------------------------
+    # Individual Leg Results
+    # -----------------------------
+    for r in results:
+        color = "#0b3d23" if (r["ev"] and r["ev"] >= 0) else "#3d0b0b"
+        border = "#00FF99" if (r["ev"] and r["ev"] >= 0) else "#FF5555"
+        emoji = "🔥" if (r["ev"] and r["ev"] >= 0) else "⚠️"
+
+        st.markdown(f"""
+        <div style='background-color:{color};padding:20px;border-radius:15px;border:1px solid {border};margin-bottom:15px;'>
+            <h3 style='color:white;'>{r["player"]} — {r["threshold"]}+ {stat_options[r["stat"]]}</h3>
+            <p><b>Model Hit Rate:</b> {r["prob"]*100:.1f}% ({r["hits"]}/{r["total"]})</p>
+            <p><b>Model Fair Odds:</b> {r["fair_odds"]}</p>
+            <p><b>FanDuel Odds:</b> {r["odds"]}</p>
+            <p><b>Book Implied:</b> {r["implied"]*100:.2f}%</p>
+            <p><b>Expected Value:</b> {r["ev"]:.2f}%</p>
+            <p>{emoji} <b>{'+EV Play' if r["ev"] and r["ev"] >= 0 else 'Negative EV Play'}</b></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Histogram
+        df = get_player_gamelog(get_player_id(r["player"]), selected_seasons)
+        if not df.empty and r["stat"] in df.columns:
             fig, ax = plt.subplots()
-            ax.hist(
-                df_hist[leg["stat"]],
-                bins=20,
-                edgecolor="black",
-                color="#00c896" if is_pos else "#e05a5a",
-            )
-            ax.axvline(leg["threshold"], color="red", linestyle="--", label=f"Threshold {leg['threshold']}")
-            ax.set_title(f"{leg['player'] or 'Unknown'} — {stat_options[leg['stat']]}")
-            ax.set_xlabel(stat_options[leg["stat"]])
-            ax.set_ylabel("Games")
+            ax.hist(df[r["stat"]], bins=20, color="#00c896" if (r["ev"] and r["ev"] >= 0) else "#e05a5a")
+            ax.axvline(r["threshold"], color="red", linestyle="--", label=f"Threshold {r['threshold']}")
+            ax.set_title(f"{r['player']} — {stat_options[r['stat']]}")
             ax.legend()
             st.pyplot(fig)
