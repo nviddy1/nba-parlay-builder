@@ -52,20 +52,21 @@ input, select, textarea {
   padding: 8px !important;
 }
 
+/* Remove focus */
 .block-container *:focus,
 .block-container *:focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
 
-/* Drop-downs: fixed size */
+/* Dropdown style */
 .stSelectbox div[data-baseweb="select"] {
   min-width: 110px !important;
   min-height: 44px !important;
   font-size: 15px !important;
 }
 
-/* Shrink threshold box to fit O/U fully */
+/* Smaller threshold box */
 .stNumberInput input {
   min-height: 40px !important;
   width: 80px !important;
@@ -102,6 +103,24 @@ input, select, textarea {
   background: transparent;
 }
 </style>
+
+<!-- Disable typing in select boxes -->
+<script>
+window.addEventListener('load', function() {
+  const observer = new MutationObserver(() => {
+    document.querySelectorAll('input[type="text"]').forEach(inp => {
+      const ph = inp.getAttribute('placeholder') || '';
+      if (['Points','Rebounds','Assists','Steals','Blocks','3PM','All','Home Only','Away Only','FULL','L10','L20','O','U'].some(v => ph.includes(v))) {
+        inp.setAttribute('readonly', true);
+        inp.style.pointerEvents = 'none';
+        inp.style.userSelect = 'none';
+        inp.style.caretColor = 'transparent';
+      }
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+});
+</script>
 """, unsafe_allow_html=True)
 
 # =========================
@@ -164,7 +183,7 @@ def calc_prob(df, stat, thr, min_minutes, loc_filter, range_key, direction):
     return hits/total, hits, total, d
 
 # =========================
-# SIDEBAR FILTERS
+# SIDEBAR
 # =========================
 with st.sidebar:
     st.subheader("⚙️ Filters")
@@ -193,7 +212,7 @@ def render_leg(i, leg, col):
         left, right = st.columns(2)
         with left:
             leg["player"] = st.text_input("Player", leg.get("player",""), key=f"p{i}")
-            leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away Only"], key=f"l{i}", label_visibility="visible")
+            leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away Only"], key=f"l{i}")
             leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"], key=f"r{i}")
         with right:
             leg["stat"] = st.selectbox("Stat", list(STAT_LABELS.keys()), format_func=lambda k: STAT_LABELS[k], key=f"s{i}")
@@ -211,7 +230,7 @@ for i in range(0, len(st.session_state.legs), 3):
             render_leg(i+j, st.session_state.legs[i+j], cols[j])
 
 # =========================
-# COMPUTE (stub placeholder)
+# COMPUTE (placeholder)
 # =========================
 if st.button("Compute"):
     st.success("✅ Ready — compute logic will run here.")
