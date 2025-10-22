@@ -27,7 +27,7 @@ st.markdown("""
 
 body, .block-container { background: var(--bg); color: var(--text); }
 
-/* Action buttons */
+/* Buttons */
 .stButton > button {
   background: var(--accent) !important;
   color: #0b1220 !important;
@@ -49,36 +49,45 @@ body, .block-container { background: var(--bg); color: var(--text); }
   color: var(--text) !important;
 }
 
-/* Base inputs */
+/* Inputs */
 input, select, textarea {
   background: #202225 !important;
   color: var(--text) !important;
   border: 1px solid #3b3f45 !important;
   border-radius: 8px !important;
   box-shadow: none !important;
+  font-size: 15px !important;
+  padding: 10px !important;
 }
 
-/* KILL all focus rings inside the main content to remove the "bubbles" */
+/* Remove focus glow */
 .block-container *:focus,
 .block-container *:focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
 
-/* Streamlit specific widgets */
+/* Specifically target select boxes and number inputs */
 .stSelectbox [data-baseweb="select"] *:focus,
-.stSelectbox [data-baseweb="select"] *:focus-visible { 
-  outline: none !important; box-shadow: none !important; 
-}
+.stSelectbox [data-baseweb="select"] *:focus-visible,
 .stTextInput input:focus,
-.stNumberInput input:focus { 
-  outline: none !important; box-shadow: none !important; 
-}
-.stNumberInput button:focus { 
-  outline: none !important; box-shadow: none !important; 
+.stNumberInput input:focus,
+.stNumberInput button:focus {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
-/* Result cards */
+/* Make dropdowns (like O/U) larger and more readable */
+.stSelectbox div[data-baseweb="select"] {
+  min-height: 48px !important;
+  font-size: 16px !important;
+}
+.stSelectbox div[data-baseweb="select"] > div {
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+/* Cards */
 .card {
   --pad-x: 28px; --pad-y: 22px;
   padding: var(--pad-y) var(--pad-x);
@@ -156,7 +165,6 @@ def prob_to_american(p: float):
     return f"{int(round((-100*p/(1-p)) if p>0.5 else (100*(1-p)/p))):+}"
 
 def calc_prob(df: pd.DataFrame, stat: str, thr: int, min_minutes: int, loc_filter: str, range_key: str, direction: str):
-    """direction: 'Over (≥)' or 'Under (≤)'"""
     if df.empty: return 0.0,0,0,df
     d = df.copy()
     d = d[d["MIN_NUM"] >= min_minutes]
@@ -169,10 +177,7 @@ def calc_prob(df: pd.DataFrame, stat: str, thr: int, min_minutes: int, loc_filte
     elif range_key == "L20": d = d.head(20)
     total = len(d)
     if total==0 or stat not in d.columns: return 0.0,0,total,d
-    if direction.startswith("Under"):
-        hits = (d[stat] <= thr).sum()
-    else:
-        hits = (d[stat] >= thr).sum()
+    hits = (d[stat] >= thr).sum() if direction.startswith("Over") else (d[stat] <= thr).sum()
     return hits/total, int(hits), int(total), d
 
 # =========================
@@ -206,7 +211,7 @@ with rem_c:
         st.session_state.legs.pop()
 
 # =========================
-# LEG GRID: 3 per row; each expander = 2×3 inputs
+# LEG GRID: 3 per row
 # =========================
 stat_keys  = list(STAT_LABELS.keys())
 loc_opts   = ["All","Home Only","Away Only"]
@@ -216,14 +221,12 @@ dir_opts   = ["Over (≥)", "Under (≤)"]
 def render_leg(idx: int, leg: dict, container):
     with container.expander(f"Leg {idx+1}", expanded=True):
         left, right = st.columns(2)
-        # Left column: Player → Home/Away → Game Range
         with left:
             leg["player"] = st.text_input("Player", value=leg.get("player",""), key=f"p_{idx}")
             leg["loc"]    = st.selectbox("Home/Away", loc_opts,
                                          index=loc_opts.index(leg.get("loc","All")), key=f"l_{idx}")
             leg["range"]  = st.selectbox("Game Range", range_opts,
                                          index=range_opts.index(leg.get("range","FULL")), key=f"r_{idx}")
-        # Right column: Stat → Direction+Threshold → Odds
         with right:
             stat_default  = leg.get("stat","PTS")
             leg["stat"]   = st.selectbox("Stat", stat_keys,
@@ -232,7 +235,7 @@ def render_leg(idx: int, leg: dict, container):
                                          key=f"s_{idx}")
             c_rt, c_od = st.columns([1,1])
             with c_rt:
-                leg["dir"] = st.selectbox("Direction", dir_opts,
+                leg["dir"] = st.selectbox("O/U", dir_opts,
                                           index=dir_opts.index(leg.get("dir","Over (≥)")), key=f"d_{idx}")
             with c_od:
                 leg["thr"] = st.number_input("Threshold", min_value=0, max_value=100,
@@ -247,7 +250,7 @@ for i in range(0, len(st.session_state.legs), 3):
         if k < len(st.session_state.legs):
             render_leg(k, st.session_state.legs[k], cols[j])
 
-# Parlay odds in sidebar when >1 leg
+# Parlay odds input in sidebar if multiple legs
 parlay_odds = 0
 if len(st.session_state.legs) > 1:
     st.sidebar.markdown("---")
@@ -262,7 +265,6 @@ if st.button("Compute"):
     rows = []
     probs_for_parlay = []
 
-    # Dark theming for plots
     plt.rcParams.update({
         "axes.facecolor": "#1e1f22",
         "figure.facecolor": "#1e1f22",
@@ -298,7 +300,6 @@ if st.button("Compute"):
             "ev":ev, "df":df_filt, "loc":loc_key, "range":range_key, "dir":direction
         })
 
-    # ---------- Combined Parlay ----------
     combined_p = float(np.prod(probs_for_parlay)) if probs_for_parlay else 0.0
     combined_fair = prob_to_american(combined_p) if combined_p>0 else "N/A"
     entered_prob = american_to_implied(parlay_odds)
@@ -323,7 +324,6 @@ if st.button("Compute"):
 
     st.markdown("---")
 
-    # ---------- Individual Legs ----------
     for r in rows:
         if not r.get("ok"):
             st.warning(f"Could not find player: **{r['name']}**")
@@ -335,24 +335,14 @@ if st.button("Compute"):
 
         stat_label = STAT_LABELS.get(r["stat"], r["stat"])
         book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
-        ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
+        ev_disp = "—" if r["ev"] is None else f"{r["ev"]:.2f}%"
 
-        # condition text (includes Over/Under, loc, range)
-        dir_word = "over" if r["dir"].startswith("Over") else "under"
-        cond_bits = [f"{dir_word} {r['thr']} {stat_label.lower()}"]
-        if r.get("loc") and r["loc"] != "All":
-            cond_bits.append(r["loc"].replace(" Only","").lower())
-        if r.get("range") == "L10":
-            cond_bits.append("last 10")
-        elif r.get("range") == "L20":
-            cond_bits.append("last 20")
-        else:
-            cond_bits.append("full season")
-        cond_text = " — ".join(cond_bits)
+        dir_word = "O" if r["dir"].startswith("Over") else "U"
+        cond_text = f"{dir_word} {r['thr']} {stat_label.lower()} — {r['range']} — {r['loc'].replace(' Only','')}"
 
         st.markdown(f"""
 <div class="card {cls}">
-  <h2>{r['name']} — {', '.join(seasons) if seasons else '—'}</h2>
+  <h2>{r['name']} — {', '.join(seasons)}</h2>
   <div class="cond">Condition: {cond_text}</div>
   <div class="row">
     <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
@@ -361,17 +351,16 @@ if st.button("Compute"):
     <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
     <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
   </div>
-  <div class="chip">{'🔥 +EV Play Detected (by your model)' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
+  <div class="chip">{'🔥 +EV Play Detected' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
 </div>
 """, unsafe_allow_html=True)
 
-        # Histogram
         df_f = r["df"]
         if not df_f.empty and r["stat"] in df_f.columns:
             fig, ax = plt.subplots()
             ax.hist(df_f[r["stat"]], bins=20, edgecolor="white",
                     color=("#00c896" if (r["ev"] is not None and r["ev"]>=0) else "#e05a5a"))
-            ax.axvline(r["thr"], color="w", linestyle="--", label=f"Threshold {r['thr']}")
-            ax.set_title(f"{r['name']} — {stat_label}")
+            ax.axvline(r["thr"], color="w", linestyle="--", label=f"Threshold {r["thr"]}")
+            ax.set_title(f"{r["name"]} — {stat_label}")
             ax.set_xlabel(stat_label); ax.set_ylabel("Games"); ax.legend()
             st.pyplot(fig)
