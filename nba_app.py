@@ -4,16 +4,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
-from datetime import datetime
 
 # =========================
 # PAGE CONFIG
 # =========================
 st.set_page_config(page_title="NBA Parlay Builder", page_icon="🏀", layout="wide")
-st.title("🏀 NBA Parlay Builder — GOAT++")
+st.title("🏀 NBA Parlay Builder — GOAT+++")
 
 # =========================
-# THEME TOGGLE (Soft Neutral Light)
+# THEME TOGGLE (Soft Neutral Light) + Smooth Transitions
 # =========================
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"  # default
@@ -25,22 +24,21 @@ with st.sidebar:
 
 is_dark = st.session_state.theme == "dark"
 
-# CSS variables for themes
 if is_dark:
     css_vars = """
     :root {
       --bg: #111214;
       --text: #ffffff;
       --muted: #a9b1bb;
-      --card: #222;
-      --border: #777;
+      --card: #1c1d20;
+      --border: #3b3f45;
       --pos-bg: #0b3d23; --pos-border: #00FF99;
       --neg-bg: #3d0b0b; --neg-border: #FF5555;
-      --chip-border: #16a34a33; --chip-text: #a7f3d0;
+      --chip-border: #16a34a33; --chip-text: #d1fae5;
+      --input-bg: #24262a; --input-border: #3b3f45;
     }
     """
 else:
-    # Soft neutral light palette (not blinding white)
     css_vars = """
     :root {
       --bg: #f4f6f8;
@@ -51,6 +49,7 @@ else:
       --pos-bg: #e9f8f0; --pos-border: #22c55e;
       --neg-bg: #fdecec; --neg-border: #ef4444;
       --chip-border: #9ca3af77; --chip-text: #0f172a;
+      --input-bg: #f8fafc; --input-border: #e5e7eb;
     }
     """
 
@@ -61,8 +60,10 @@ st.markdown(f"""
   body, .block-container {{
     background: var(--bg);
     color: var(--text);
+    transition: background 220ms ease, color 220ms ease;
   }}
 
+  /* Cards */
   .card {{
     --pad-x: 28px; --pad-y: 22px;
     padding: var(--pad-y) var(--pad-x);
@@ -72,29 +73,39 @@ st.markdown(f"""
     background: var(--card);
     box-shadow: 0 0 14px rgba(0,0,0,0.12);
     width: 100%;
+    transition: background 220ms ease, border-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
   }}
   .neutral {{ background: var(--card); border-color: var(--border); }}
   .pos     {{ background: var(--pos-bg); border-color: var(--pos-border); }}
   .neg     {{ background: var(--neg-bg); border-color: var(--neg-border); }}
 
-  .card h2 {{ color: var(--text); margin:0 0 6px 0; font-weight:800; }}
-  .cond {{ color: var(--muted); font-size:15px; margin: 2px 0 12px 0; }}
+  .card h2 {{ color: var(--text); margin:0 0 6px 0; font-weight:800; transition: color 220ms ease; }}
+  .cond {{ color: var(--muted); font-size:15px; margin: 2px 0 12px 0; transition: color 220ms ease; }}
 
-  /* single real row of metrics, wraps if narrow */
+  /* metric row */
   .row {{
     display:flex; flex-wrap:wrap; gap:16px;
     align-items:flex-end; justify-content:space-between;
     margin: 8px 0 6px 0;
   }}
   .m {{ min-width:140px; flex:1; }}
-  .lab {{ color: var(--muted); font-size:14px; margin-bottom:4px; }}
-  .val {{ color: var(--text); font-size:28px; font-weight:800; line-height:1.1; }}
+  .lab {{ color: var(--muted); font-size:14px; margin-bottom:4px; transition: color 220ms ease; }}
+  .val {{ color: var(--text); font-size:28px; font-weight:800; line-height:1.1; transition: color 220ms ease; }}
 
   .chip {{
     display:inline-block; margin-top:12px;
     padding:8px 16px; border-radius:999px;
     font-size:14px; color: var(--chip-text); border:1px solid var(--chip-border);
-    background: transparent;
+    background: transparent; transition: border-color 220ms ease, color 220ms ease;
+  }}
+
+  /* Input card styling inside expanders */
+  .legwrap {{
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 16px;
+    padding: 12px 14px;
+    transition: background 220ms ease, border-color 220ms ease;
   }}
 </style>
 """, unsafe_allow_html=True)
@@ -127,22 +138,12 @@ def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
             pass
     if not dfs: return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
-    # numeric types
     for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
-    # minutes numeric
-    if "MIN" in df.columns:
-        df["MIN_NUM"] = df["MIN"].apply(to_minutes)
-    else:
-        df["MIN_NUM"] = 0
-    # parse game date
+    df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     if "GAME_DATE" in df.columns:
-        try:
-            df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"])
-        except:
-            # fallback if e.g. "OCT 21, 2024"
-            df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
+        df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
     else:
         df["GAME_DATE_DT"] = pd.Timestamp.now()
     return df
@@ -158,30 +159,20 @@ def prob_to_american(p: float):
     return f"{int(round((-100*p/(1-p)) if p>0.5 else (100*(1-p)/p))):+}"
 
 def calc_prob(df: pd.DataFrame, stat: str, thr: int, min_minutes: int, loc_filter: str, range_key: str):
-    """
-    loc_filter: "All", "Home Only", "Away Only"
-    range_key: "L10", "L20", "FULL"
-    """
     if df.empty: return 0.0,0,0,df
     d = df.copy()
-    # minutes
     d = d[d["MIN_NUM"] >= min_minutes]
-    # location
     if loc_filter == "Home Only":
-        d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False) | d["MATCHUP"].astype(str).str.contains("vs.", regex=False)]
+        d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
     elif loc_filter == "Away Only":
         d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-    # sort by date desc & slice range
     d = d.sort_values("GAME_DATE_DT", ascending=False)
     if range_key == "L10":
         d = d.head(10)
     elif range_key == "L20":
         d = d.head(20)
-    # probability
     total = len(d)
-    if total==0: return 0.0,0,0,d
-    if stat not in d.columns:
-        return 0.0,0,total,d
+    if total==0 or stat not in d.columns: return 0.0,0,total,d
     hits = (d[stat] >= thr).sum()
     return hits/total, int(hits), int(total), d
 
@@ -211,12 +202,11 @@ with st.sidebar:
     )
 
 # =========================
-# LEGS STATE
+# LEGS STATE + QUICK PICK
 # =========================
 if "legs" not in st.session_state:
     st.session_state.legs = [{"player":"","stat":"PTS","thr":10,"odds":-110,"loc":"All","range":"L20"}]
 
-# Apply Quick Pick (overwrites current legs)
 def apply_quick_pick(choice: str):
     mapping = {
         "Stephen Curry — 25+ PTS & 4+ 3PM": [
@@ -251,31 +241,54 @@ if qp != "—":
     apply_quick_pick(qp)
 
 # =========================
-# LEG MANAGEMENT
+# LEG MANAGEMENT (Add/Remove)
 # =========================
-c1, c2 = st.columns(2)
-with c1:
+cc1, cc2 = st.columns(2)
+with cc1:
     if st.button("➕ Add Leg"):
         st.session_state.legs.append({"player":"","stat":"PTS","thr":10,"odds":-110,"loc":"All","range":"L20"})
-with c2:
+with cc2:
     if st.button("➖ Remove Leg") and len(st.session_state.legs)>1:
         st.session_state.legs.pop()
 
-for i, leg in enumerate(st.session_state.legs):
-    with st.expander(f"Leg {i+1}", expanded=True):
-        leg["player"] = st.text_input(f"Player {i+1}", leg["player"], key=f"p{i}")
-        leg["stat"]   = st.selectbox(f"Stat {i+1}", list(STAT_LABELS.keys()),
-                                     format_func=lambda k: STAT_LABELS[k],
-                                     index=list(STAT_LABELS.keys()).index(leg["stat"]) if leg["stat"] in STAT_LABELS else 0,
-                                     key=f"s{i}")
-        leg["thr"]    = st.number_input(f"Threshold (≥) {i+1}", 0, 100, leg["thr"], key=f"t{i}")
-        leg["odds"]   = st.number_input(f"FanDuel Odds {i+1}", -10000, 10000, leg["odds"], step=5, key=f"o{i}")
-        leg["loc"]    = st.selectbox(f"Home/Away {i+1}", ["All","Home Only","Away Only"],
-                                     index=["All","Home Only","Away Only"].index(leg["loc"]) if leg.get("loc") else 0,
-                                     key=f"l{i}")
-        leg["range"]  = st.selectbox(f"Game Range {i+1}", ["L10","L20","FULL"],
-                                     index=["L10","L20","FULL"].index(leg["range"]) if leg.get("range") else 1,
-                                     key=f"r{i}")
+# =========================
+# LEG INPUT GRID (Two expanders per row; inside: 3×2 fields)
+# =========================
+def render_leg_expander(idx: int, leg: dict, col):
+    with col.expander(f"Leg {idx+1}", expanded=True):
+        st.markdown('<div class="legwrap">', unsafe_allow_html=True)
+
+        # Top row: Player | Stat | Threshold
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            leg["player"] = st.text_input(f"Player {idx+1}", leg["player"], key=f"p{idx}")
+        with r1c2:
+            leg["stat"] = st.selectbox(f"Stat {idx+1}", list(STAT_LABELS.keys()),
+                                       format_func=lambda k: STAT_LABELS[k],
+                                       index=list(STAT_LABELS.keys()).index(leg["stat"]) if leg["stat"] in STAT_LABELS else 0,
+                                       key=f"s{idx}")
+        with r1c3:
+            leg["thr"] = st.number_input(f"Threshold (≥) {idx+1}", 0, 100, leg["thr"], key=f"t{idx}")
+
+        # Bottom row: Home/Away | Game Range | FanDuel Odds
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            leg["loc"] = st.selectbox(f"Home/Away {idx+1}", ["All","Home Only","Away Only"],
+                                      index=["All","Home Only","Away Only"].index(leg.get("loc","All")), key=f"l{idx}")
+        with r2c2:
+            leg["range"] = st.selectbox(f"Game Range {idx+1}", ["L10","L20","FULL"],
+                                        index=["L10","L20","FULL"].index(leg.get("range","L20")), key=f"r{idx}")
+        with r2c3:
+            leg["odds"] = st.number_input(f"FanDuel Odds {idx+1}", -10000, 10000, leg["odds"], step=5, key=f"o{idx}")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# arrange two per row
+for i in range(0, len(st.session_state.legs), 2):
+    cL, cR = st.columns(2)
+    render_leg_expander(i, st.session_state.legs[i], cL)
+    if i+1 < len(st.session_state.legs):
+        render_leg_expander(i+1, st.session_state.legs[i+1], cR)
 
 # Parlay odds only when >1 leg
 parlay_odds = 0
@@ -314,7 +327,7 @@ if st.button("Compute"):
             rows.append({"ok":False,"name":name or "Unknown","stat":stat,"thr":thr,"book":book})
             continue
 
-        df = fetch_gamelog(pid, st.session_state.get("seasons", []) or seasons)
+        df = fetch_gamelog(pid, seasons)
         p, hits, total, df_filt = calc_prob(df, stat, thr, min_minutes, loc_key, range_key)
         fair = prob_to_american(p)
         book_prob = american_to_implied(book)
@@ -362,6 +375,7 @@ if st.button("Compute"):
         if r["ev"] is not None:
             cls = "pos" if r["ev"] >= 0 else "neg"
 
+        STAT_LABELS = {"PTS":"Points","REB":"Rebounds","AST":"Assists","STL":"Steals","BLK":"Blocks","FG3M":"3PM"}
         stat_label = STAT_LABELS.get(r["stat"], r["stat"])
         book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
         ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
@@ -395,7 +409,6 @@ if st.button("Compute"):
         df_f = r["df"]
         if not df_f.empty and r["stat"] in df_f.columns:
             fig, ax = plt.subplots()
-            # bar color echoes EV signal; background echoes theme
             ax.hist(df_f[r["stat"]], bins=20, edgecolor=("white" if is_dark else "black"),
                     color=("#00c896" if (r["ev"] is not None and r["ev"]>=0) else "#e05a5a"))
             ax.axvline(r["thr"], color=("w" if is_dark else "red"), linestyle="--", label=f"Threshold {r['thr']}")
