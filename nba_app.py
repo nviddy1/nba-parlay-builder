@@ -6,7 +6,7 @@ from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
 
 # -----------------------------
-# PAGE CONFIG + STYLE
+# PAGE CONFIG + STYLES
 # -----------------------------
 st.set_page_config(page_title="NBA Parlay Builder", layout="wide")
 
@@ -14,7 +14,6 @@ st.markdown("""
 <style>
   body { background-color: #111; color: white; }
 
-  /* Card styling */
   .card {
     padding: 26px 32px;
     border-radius: 18px;
@@ -41,7 +40,6 @@ st.markdown("""
     margin-bottom: 10px;
   }
 
-  /* Metric row */
   .metric-row {
     display: flex;
     justify-content: space-between;
@@ -151,16 +149,9 @@ st.sidebar.header("Filters")
 
 season_options = ["2024-25", "2023-24", "2022-23"]
 selected_seasons = st.sidebar.multiselect("Seasons to include", season_options, default=["2024-25"])
-
 min_minutes = st.sidebar.slider("Minimum Minutes Played", 0, 40, 20, 1)
 home_filter = st.sidebar.selectbox("Game Location", ["All", "Home Only", "Away Only"])
 
-# Placeholder for parlay odds — only show if >1 leg
-show_parlay_odds = False
-
-# -----------------------------
-# LEG MANAGEMENT
-# -----------------------------
 if "legs" not in st.session_state:
     st.session_state.legs = [{"player": "", "stat": "PTS", "threshold": 10, "odds": -110}]
 
@@ -181,10 +172,10 @@ for i, leg in enumerate(st.session_state.legs):
         leg["threshold"] = st.number_input(f"Threshold (≥) {i+1}", 0, 100, leg["threshold"], key=f"t_{i}")
         leg["odds"] = st.number_input(f"FanDuel Odds {i+1}", -10000, 10000, leg["odds"], step=5, key=f"o_{i}")
 
+# Show parlay odds input if more than one leg
 if len(st.session_state.legs) > 1:
-    show_parlay_odds = True
     st.sidebar.markdown("---")
-    parlay_odds = st.sidebar.number_input("Combined Parlay Odds (e.g., +300, -150)", value=0, step=5, key="parlay_odds")
+    parlay_odds = st.sidebar.number_input("Combined Parlay Odds (e.g., +300, -150)", value=0, step=5)
 else:
     parlay_odds = 0
 
@@ -193,82 +184,74 @@ else:
 # -----------------------------
 if st.button("Compute"):
     st.markdown("---")
+    home_only = True if home_filter == "Home Only" else False if home_filter == "Away Only" else None
 
-    home_only = None
-    if home_filter == "Home Only":
-        home_only = True
-    elif home_filter == "Away Only":
-        home_only = False
-
-    rows = []
-    model_probs = []
-
+    rows, model_probs = [], []
     for leg in st.session_state.legs:
-        name = leg["player"].strip()
-        stat = leg["stat"]
-        thr = int(leg["threshold"])
-        book_odds = int(leg["odds"])
-
+        name, stat, thr, book_odds = leg["player"].strip(), leg["stat"], int(leg["threshold"]), int(leg["odds"])
         pid = get_player_id(name)
         if not pid:
             rows.append(dict(name=name or "Unknown", label=f"{thr}+ {stat_options[stat]}", prob=0.0, hits=0, total=0,
-                             fair="N/A", book_odds=book_odds, book_prob=american_to_implied(book_odds),
-                             ev=None, df=pd.DataFrame(), stat=stat, thr=thr))
+                             fair="N/A", book_odds=book_odds, book_prob=american_to_implied(book_odds), ev=None,
+                             df=pd.DataFrame(), stat=stat, thr=thr))
             continue
 
         df = get_player_gamelog(pid, selected_seasons)
         prob, hits, total, df_filt = calculate_probability(df, stat, thr, home_only, min_minutes)
-        fair = prob_to_american(prob)
-        book_prob = american_to_implied(book_odds)
+        fair, book_prob = prob_to_american(prob), american_to_implied(book_odds)
         ev = None if book_prob is None else (prob - book_prob) * 100
-        if prob > 0:
-            model_probs.append(prob)
-
+        if prob > 0: model_probs.append(prob)
         rows.append(dict(name=name, label=f"{thr}+ {stat_options[stat]}", prob=prob, hits=hits, total=total,
                          fair=fair, book_odds=book_odds, book_prob=book_prob, ev=ev,
                          df=df_filt, stat=stat, thr=thr))
 
-    # -----------------------------
     # COMBINED PARLAY SUMMARY
-    # -----------------------------
     combined_prob = float(np.prod(model_probs)) if model_probs else 0.0
     combined_odds = prob_to_american(combined_prob) if combined_prob > 0 else "N/A"
     book_parlay_prob = american_to_implied(parlay_odds)
     parlay_ev = None if book_parlay_prob is None else (combined_prob - book_parlay_prob) * 100
     card_class, emoji = ("pos", "🔥") if parlay_ev and parlay_ev >= 0 else ("neg", "⚠️") if parlay_ev else ("neutral", "ℹ️")
 
-    st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
-    st.markdown(f"<h2>💥 Combined Parlay — {', '.join(selected_seasons)}</h2>", unsafe_allow_html=True)
-    st.markdown("<div class='condition-line'>Includes all selected legs and filters</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='metric-row'>", unsafe_allow_html=True)
-    st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Parlay Probability</div><div class='metric-value'>{combined_prob*100:.2f}%</div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Fair Odds</div><div class='metric-value'>{combined_odds}</div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='metric-box'><div class='metric-label'>Entered Parlay Odds</div><div class='metric-value'>{parlay_odds if parlay_odds else '—'}</div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>{book_parlay_prob*100:.2f}%</div></div>" if book_parlay_prob else "<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>{parlay_ev:.2f}%</div></div>" if parlay_ev is not None else "<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown(f"<div class='small-chip'>{emoji} {'+EV Parlay Detected' if (parlay_ev is not None and parlay_ev >= 0) else ('Negative EV Parlay' if parlay_ev is not None else 'Enter parlay odds in sidebar')}</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
+        st.markdown(f"<h2>💥 Combined Parlay — {', '.join(selected_seasons)}</h2>", unsafe_allow_html=True)
+        st.markdown("<div class='condition-line'>Includes all selected legs and filters</div>", unsafe_allow_html=True)
+        st.markdown("<div class='metric-row'>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Parlay Probability</div><div class='metric-value'>{combined_prob*100:.2f}%</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Fair Odds</div><div class='metric-value'>{combined_odds}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><div class='metric-label'>Entered Parlay Odds</div><div class='metric-value'>{parlay_odds if parlay_odds else '—'}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>{book_parlay_prob*100:.2f}%</div></div>" if book_parlay_prob else "<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>{parlay_ev:.2f}%</div></div>" if parlay_ev is not None else "<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='small-chip'>{emoji} {'+EV Parlay Detected' if (parlay_ev and parlay_ev >= 0) else ('Negative EV Parlay' if parlay_ev is not None else 'Enter parlay odds')}</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # -----------------------------
     # INDIVIDUAL LEGS
-    # -----------------------------
     for r in rows:
         card_class, emoji = ("pos", "🔥") if r["ev"] and r["ev"] >= 0 else ("neg", "⚠️") if r["ev"] else ("neutral", "ℹ️")
-        st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
-        st.markdown(f"<h2>{r['name']} — {', '.join(selected_seasons)}</h2>", unsafe_allow_html=True)
-        st.markdown(f"<div class='condition-line'>Condition: {r['thr']}+ {stat_options[r['stat']].lower()}</div>", unsafe_allow_html=True)
+        with st.container():
+            st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
+            st.markdown(f"<h2>{r['name']} — {', '.join(selected_seasons)}</h2>", unsafe_allow_html=True)
+            st.markdown(f"<div class='condition-line'>Condition: {r['thr']}+ {stat_options[r['stat']].lower()}</div>", unsafe_allow_html=True)
+            st.markdown("<div class='metric-row'>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Hit Rate</div><div class='metric-value'>{r['prob']*100:.1f}% ({r['hits']}/{r['total']})</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Fair Odds</div><div class='metric-value'>{r['fair']}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><div class='metric-label'>FanDuel Odds</div><div class='metric-value'>{r['book_odds']}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>{r['book_prob']*100:.1f}%</div></div>" if r["book_prob"] else "<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>{r['ev']:.2f}%</div></div>" if r["ev"] is not None else "<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-chip'>{emoji} {'+EV Play Detected (by your model)' if (r['ev'] and r['ev'] >= 0) else ('Negative EV Play' if r['ev'] else 'Add odds to compute EV')}</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("<div class='metric-row'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Hit Rate</div><div class='metric-value'>{r['prob']*100:.1f}% ({r['hits']}/{r['total']})</div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><div class='metric-label'>Model Fair Odds</div><div class='metric-value'>{r['fair']}</div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><div class='metric-label'>FanDuel Odds</div><div class='metric-value'>{r['book_odds']}</div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>{r['book_prob']*100:.1f}%</div></div>" if r["book_prob"] else "<div class='metric-box'><div class='metric-label'>Book Implied</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>{r['ev']:.2f}%</div></div>" if r["ev"] is not None else "<div class='metric-box'><div class='metric-label'>Expected Value</div><div class='metric-value'>—</div></div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown(f"<div class='small-chip'>{emoji} {'+EV Play Detected (by your model)' if (r['ev'] is not None and r['ev'] >= 0) else ('Negative EV Play' if r['ev'] is not None else 'Add odds to compute EV')}</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+            # Histogram
+            if not r["df"].empty and r["stat"] in r["df"].columns:
+                fig, ax = plt.subplots()
+                ax.hist(r["df"][r["stat"]], bins=20, edgecolor="black",
+                        color="#00c896" if (r["ev"] and r["ev"] >= 0) else "#e05a5a")
+                ax.axvline(r["thr"], color="red", linestyle="--", label=f"Threshold {r['thr']}")
+                ax.set_title(f"{r['name']} — {stat_options[r['stat']]}")
+                ax.set_xlabel(stat_options[r["stat"]])
+                ax.set_ylabel("Games")
+                ax.legend()
+                st.pyplot(fig)
