@@ -54,11 +54,11 @@ def prob_to_american(prob):
     else:
         return int((1 - prob) / prob * 100)
 
-def american_to_implied(prob_odds):
-    if prob_odds > 0:
-        return 100 / (prob_odds + 100)
+def american_to_implied(odds):
+    if odds > 0:
+        return 100 / (odds + 100)
     else:
-        return abs(prob_odds) / (abs(prob_odds) + 100)
+        return abs(odds) / (abs(odds) + 100)
 
 # -----------------------------
 # Sidebar Filters
@@ -113,7 +113,6 @@ if st.button("Compute"):
     rows = []
     all_probs = []
     all_implieds = []
-    evs = []
 
     for leg in legs:
         player_name = leg["player"]
@@ -138,65 +137,90 @@ if st.button("Compute"):
         model_implied = prob
         book_implied = american_to_implied(fanduel_odds)
         ev = (model_implied - book_implied) * 100
-        evs.append(ev)
+
         all_probs.append(model_implied)
         all_implieds.append(book_implied)
 
-        color = "#0b3d23" if ev >= 0 else "#3d0b0b"
-        border_color = "#00FF99" if ev >= 0 else "#FF5555"
-        emoji = "🔥" if ev >= 0 else "⚠️"
-
-        st.markdown(f"""
-        <div style='background-color:{color};padding:20px;border-radius:15px;margin-bottom:20px;border:1px solid {border_color};'>
-            <h3 style='color:white;'>{player_name} — <span style='color:#9AE6B4;'>{selected_seasons[0]}</span></h3>
-            <p><b>Condition:</b> {threshold}+ {stat_options[stat].lower()}</p>
-            <p><b>Model Hit Rate:</b> {model_implied*100:.1f}% ({hits}/{total})</p>
-            <p><b>Model Fair Odds:</b> {fair_odds}</p>
-            <p><b>FanDuel Odds:</b> {fanduel_odds}</p>
-            <p><b>Book Implied:</b> {book_implied*100:.1f}%</p>
-            <p><b>Expected Value:</b> <span style='font-size:22px;color:#00FF99;'>{ev:.2f}%</span></p>
-            <div style='height:10px;background-color:#333;border-radius:10px;'>
-                <div style='height:10px;width:{min(abs(ev),100)}%;background-color:{border_color};border-radius:10px;'></div>
-            </div>
-            <p style='margin-top:10px;font-size:17px;color:white;'>{emoji} <b>{'+EV Play Detected' if ev >= 0 else 'Negative EV Play'}</b></p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Histogram
-        fig, ax = plt.subplots()
-        ax.hist(df[stat], bins=20, edgecolor="black", color="#00c896" if ev >= 0 else "#e05a5a")
-        ax.axvline(threshold, color="red", linestyle="--", label=f"Threshold {threshold}")
-        ax.set_title(f"{player_name} — {stat_options[stat]}")
-        ax.set_xlabel(stat_options[stat])
-        ax.set_ylabel("Games")
-        ax.legend()
-        st.pyplot(fig)
+        # Store each leg for later display
+        rows.append({
+            "player": player_name,
+            "stat": stat,
+            "threshold": threshold,
+            "hits": hits,
+            "total": total,
+            "prob": model_implied,
+            "fair_odds": fair_odds,
+            "book_odds": fanduel_odds,
+            "book_implied": book_implied,
+            "ev": ev
+        })
 
     # -----------------------------
-    # Parlay Summary (NEW SECTION)
+    # Combined Parlay Summary FIRST
     # -----------------------------
     if all_probs:
         combined_prob = np.prod(all_probs)
-        combined_odds = prob_to_american(combined_prob)
-        combined_book_prob = np.prod(all_implieds)
-        parlay_ev = (combined_prob - combined_book_prob) * 100
+        combined_fair_odds = prob_to_american(combined_prob)
 
-        color = "#0b3d23" if parlay_ev >= 0 else "#3d0b0b"
-        border_color = "#00FF99" if parlay_ev >= 0 else "#FF5555"
-        emoji = "🔥" if parlay_ev >= 0 else "⚠️"
-
-        st.markdown("---")
         st.subheader("💥 Combined Parlay Summary")
+
+        parlay_odds = st.number_input("Enter Combined Parlay Odds (e.g., +300, -150)", value=0, step=5)
+        parlay_book_prob = american_to_implied(parlay_odds) if parlay_odds != 0 else None
+        parlay_ev = None
+        if parlay_book_prob:
+            parlay_ev = (combined_prob - parlay_book_prob) * 100
+
+        # Dynamic colors
+        color = "#0b3d23" if (parlay_ev and parlay_ev >= 0) else "#3d0b0b"
+        border_color = "#00FF99" if (parlay_ev and parlay_ev >= 0) else "#FF5555"
+        emoji = "🔥" if (parlay_ev and parlay_ev >= 0) else "⚠️"
 
         st.markdown(f"""
         <div style='background-color:{color};padding:25px;border-radius:15px;border:1px solid {border_color};margin-bottom:25px;'>
             <h2 style='color:white;'>Combined Parlay — <span style='color:#9AE6B4;'>{selected_seasons[0]}</span></h2>
-            <p><b>Parlay Probability:</b> {combined_prob*100:.2f}%</p>
-            <p><b>Model Fair Odds:</b> {combined_odds}</p>
-            <p><b>Expected Value:</b> <span style='font-size:22px;color:#00FF99;'>{parlay_ev:.2f}%</span></p>
+            <p><b>Model Parlay Probability:</b> {combined_prob*100:.2f}%</p>
+            <p><b>Model Fair Odds:</b> {combined_fair_odds}</p>
+            <p><b>Entered Parlay Odds:</b> {parlay_odds}</p>
+            <p><b>Book Implied:</b> {parlay_book_prob*100:.2f}%</p>
+            <p><b>Expected Value:</b> <span style='font-size:22px;color:#00FF99;'>{parlay_ev:.2f if parlay_ev else 0:.2f}%</span></p>
             <div style='height:10px;background-color:#333;border-radius:10px;'>
-                <div style='height:10px;width:{min(abs(parlay_ev),100)}%;background-color:{border_color};border-radius:10px;'></div>
+                <div style='height:10px;width:{min(abs(parlay_ev),100) if parlay_ev else 0}%;background-color:{border_color};border-radius:10px;'></div>
             </div>
-            <p style='margin-top:10px;font-size:17px;color:white;'>{emoji} <b>{'+EV Parlay Detected' if parlay_ev >= 0 else 'Negative EV Parlay'}</b></p>
+            <p style='margin-top:10px;font-size:17px;color:white;'>{emoji} <b>{'+EV Parlay Detected' if (parlay_ev and parlay_ev >= 0) else 'Negative EV Parlay'}</b></p>
         </div>
         """, unsafe_allow_html=True)
+
+    # -----------------------------
+    # Individual Legs Below
+    # -----------------------------
+    for leg_data in rows:
+        color = "#0b3d23" if leg_data["ev"] >= 0 else "#3d0b0b"
+        border_color = "#00FF99" if leg_data["ev"] >= 0 else "#FF5555"
+        emoji = "🔥" if leg_data["ev"] >= 0 else "⚠️"
+
+        st.markdown(f"""
+        <div style='background-color:{color};padding:20px;border-radius:15px;margin-bottom:20px;border:1px solid {border_color};'>
+            <h3 style='color:white;'>{leg_data["player"]} — <span style='color:#9AE6B4;'>{selected_seasons[0]}</span></h3>
+            <p><b>Condition:</b> {leg_data["threshold"]}+ {stat_options[leg_data["stat"]].lower()}</p>
+            <p><b>Model Hit Rate:</b> {leg_data["prob"]*100:.1f}% ({leg_data["hits"]}/{leg_data["total"]})</p>
+            <p><b>Model Fair Odds:</b> {leg_data["fair_odds"]}</p>
+            <p><b>FanDuel Odds:</b> {leg_data["book_odds"]}</p>
+            <p><b>Book Implied:</b> {leg_data["book_implied"]*100:.1f}%</p>
+            <p><b>Expected Value:</b> <span style='font-size:22px;color:#00FF99;'>{leg_data["ev"]:.2f}%</span></p>
+            <div style='height:10px;background-color:#333;border-radius:10px;'>
+                <div style='height:10px;width:{min(abs(leg_data["ev"]),100)}%;background-color:{border_color};border-radius:10px;'></div>
+            </div>
+            <p style='margin-top:10px;font-size:17px;color:white;'>{emoji} <b>{'+EV Play Detected' if leg_data["ev"] >= 0 else 'Negative EV Play'}</b></p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Histogram
+        df = get_player_gamelog(get_player_id(leg_data["player"]), selected_seasons)
+        fig, ax = plt.subplots()
+        ax.hist(df[leg_data["stat"]], bins=20, edgecolor="black", color="#00c896" if leg_data["ev"] >= 0 else "#e05a5a")
+        ax.axvline(leg_data["threshold"], color="red", linestyle="--", label=f"Threshold {leg_data['threshold']}")
+        ax.set_title(f"{leg_data['player']} — {stat_options[leg_data['stat']]}")
+        ax.set_xlabel(stat_options[leg_data["stat"]])
+        ax.set_ylabel("Games")
+        ax.legend()
+        st.pyplot(fig)
