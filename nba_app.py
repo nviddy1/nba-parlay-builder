@@ -12,7 +12,7 @@ st.set_page_config(page_title="NBA Player Prop Parlay Builder", page_icon="🏀"
 st.title("🏀 NBA Player Prop Parlay Builder")
 
 # =========================
-# DARK THEME + CLEAN INPUTS (no focus bubbles)
+# STYLE — DARK & RESPONSIVE
 # =========================
 st.markdown("""
 <style>
@@ -34,7 +34,8 @@ body, .block-container { background: var(--bg); color: var(--text); }
   border: none !important;
   border-radius: 10px !important;
   font-weight: 700 !important;
-  padding: 10px 16px !important;
+  padding: 8px 14px !important;
+  font-size: 0.9rem !important;
   box-shadow: 0 6px 18px rgba(0,200,150,0.25) !important;
 }
 
@@ -44,7 +45,7 @@ body, .block-container { background: var(--bg); color: var(--text); }
   background: var(--card) !important;
   border-radius: 12px !important;
 }
-.streamlit-expanderHeader { font-weight: 800 !important; color: var(--text) !important; }
+.streamlit-expanderHeader { font-weight: 800 !important; color: var(--text) !important; font-size: 0.9rem !important; }
 
 /* Inputs */
 input, select, textarea {
@@ -52,44 +53,23 @@ input, select, textarea {
   color: var(--text) !important;
   border: 1px solid #3b3f45 !important;
   border-radius: 8px !important;
-  font-size: 15px !important;
-  padding: 8px !important;
+  font-size: 0.85rem !important;
+  padding: 6px !important;
 }
 
-/* Remove focus rings everywhere inside content */
-.block-container *:focus,
-.block-container *:focus-visible {
-  outline: none !important;
-  box-shadow: none !important;
+/* Compact spacing on mobile */
+.block-container { padding-top: 1rem !important; }
+@media (max-width: 768px) {
+  .stExpander { font-size: 0.85rem !important; }
+  .stButton > button { font-size: 0.8rem !important; padding: 6px 10px !important; }
 }
 
-/* Streamlit widget specifics */
-.stSelectbox [data-baseweb="select"] *:focus,
-.stSelectbox [data-baseweb="select"] *:focus-visible,
-.stTextInput input:focus,
-.stNumberInput input:focus,
-.stNumberInput button:focus {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-/* Make select/number inputs a consistent, readable size */
-.stSelectbox div[data-baseweb="select"] {
-  min-width: 120px !important;
-  min-height: 44px !important;
-  font-size: 15px !important;
-}
-.stNumberInput input {
-  min-height: 44px !important;
-  font-size: 15px !important;
-}
-
-/* Cards (results) */
+/* Cards */
 .card {
-  --pad-x: 28px; --pad-y: 22px;
+  --pad-x: 20px; --pad-y: 18px;
   padding: var(--pad-y) var(--pad-x);
-  border-radius: 18px;
-  margin: 14px 0 26px 0;
+  border-radius: 14px;
+  margin: 10px 0 20px 0;
   border: 1px solid var(--card-border);
   background: var(--card-bg);
   box-shadow: 0 0 14px rgba(0,0,0,0.25);
@@ -99,23 +79,22 @@ input, select, textarea {
 .pos     { --card-bg:#0b3d23; --card-border:#00FF99; }
 .neg     { --card-bg:#3d0b0b; --card-border:#FF5555; }
 
-.card h2 { color:#fff; margin:0 0 6px 0; font-weight:800; }
-.cond { color:#a9b1bb; font-size:15px; margin: 2px 0 12px 0; }
+.card h2 { color:#fff; margin:0 0 6px 0; font-weight:800; font-size:1.1rem; }
+.cond { color:#a9b1bb; font-size:0.85rem; margin: 2px 0 10px 0; }
 
-/* single row of metrics (wraps if narrow) */
 .row {
-  display:flex; flex-wrap:wrap; gap:16px;
+  display:flex; flex-wrap:wrap; gap:10px;
   align-items:flex-end; justify-content:space-between;
-  margin: 8px 0 6px 0;
+  margin: 6px 0 4px 0;
 }
-.m { min-width:140px; flex:1; }
-.lab { color:#cbd5e1; font-size:14px; margin-bottom:4px; }
-.val { color:#fff; font-size:28px; font-weight:800; line-height:1.1; }
+.m { min-width:120px; flex:1; }
+.lab { color:#cbd5e1; font-size:0.75rem; margin-bottom:2px; }
+.val { color:#fff; font-size:1.1rem; font-weight:800; line-height:1.1; }
 
 .chip {
-  display:inline-block; margin-top:12px;
-  padding:8px 16px; border-radius:999px;
-  font-size:14px; color:#a7f3d0; border:1px solid #16a34a33;
+  display:inline-block; margin-top:10px;
+  padding:6px 12px; border-radius:999px;
+  font-size:0.75rem; color:#a7f3d0; border:1px solid #16a34a33;
   background: transparent;
 }
 </style>
@@ -124,20 +103,31 @@ input, select, textarea {
 # =========================
 # HELPERS
 # =========================
+@st.cache_data
+def get_all_player_names():
+    """Get all active NBA player names for autocomplete."""
+    try:
+        all_players = players.get_active_players()
+    except Exception:
+        all_players = players.get_players()  # fallback, includes retired
+    return sorted({p.get("full_name") for p in all_players if p.get("full_name")})
+
+PLAYER_LIST = [""] + get_all_player_names()  # leading blank for unselected
+
 STAT_LABELS = {"PTS":"Points","REB":"Rebounds","AST":"Assists","STL":"Steals","BLK":"Blocks","FG3M":"3PM"}
 
 def get_player_id(name: str):
+    if not name:
+        return None
     res = players.find_players_by_full_name(name)
     return res[0]["id"] if res else None
 
 def to_minutes(val):
     try:
         s = str(val)
-        if ":" in s:
-            return int(s.split(":")[0])
+        if ":" in s: return int(s.split(":")[0])
         return int(float(s))
-    except:
-        return 0
+    except: return 0
 
 def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
     dfs = []
@@ -149,7 +139,7 @@ def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
             pass
     if not dfs: return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
-    for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
+    for k in STAT_LABELS.keys():
         if k in df.columns: df[k] = pd.to_numeric(df[k], errors="coerce")
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     if "GAME_DATE" in df.columns:
@@ -168,16 +158,7 @@ def prob_to_american(p: float):
     if p<=0 or p>=1: return "N/A"
     return f"{int(round((-100*p/(1-p)) if p>0.5 else (100*(1-p)/p))):+}"
 
-def calc_prob(
-    df: pd.DataFrame,
-    stat: str,
-    thr: int,
-    min_minutes: int,
-    loc_filter: str,
-    range_key: str,
-    direction: str
-):
-    """Return (prob, hits, total, filtered_df). direction = 'Over (≥)' or 'Under (≤)'."""
+def calc_prob(df, stat, thr, min_minutes, loc_filter, range_key, direction):
     if df.empty: return 0.0, 0, 0, df
     d = df.copy()
     d = d[d["MIN_NUM"] >= min_minutes]
@@ -185,16 +166,13 @@ def calc_prob(
         d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
     elif loc_filter == "Away Only":
         d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-    d = d.sort_values("GAME_DATE_DT", ascending=False)
+    d = d.sort_values("GAME_DATE_DT", descending=False).sort_values("GAME_DATE_DT", ascending=False)
     if range_key == "L10": d = d.head(10)
     elif range_key == "L20": d = d.head(20)
     total = len(d)
     if total==0 or stat not in d.columns: return 0.0, 0, total, d
-    if direction.startswith("Under"):
-        hits = (d[stat] <= thr).sum()
-    else:
-        hits = (d[stat] >= thr).sum()
-    return (hits/total if total else 0.0), int(hits), int(total), d
+    hits = (d[stat] <= thr).sum() if direction.startswith("Under") else (d[stat] >= thr).sum()
+    return hits/total, int(hits), int(total), d
 
 # =========================
 # SIDEBAR FILTERS
@@ -205,7 +183,7 @@ with st.sidebar:
     min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1)
 
 # =========================
-# LEGS STATE
+# LEGS
 # =========================
 if "legs" not in st.session_state:
     st.session_state.legs = [{
@@ -213,9 +191,7 @@ if "legs" not in st.session_state:
         "odds":-110, "loc":"All", "range":"FULL"
     }]
 
-# =========================
-# ADD / REMOVE CONTROLS
-# =========================
+# Add/Remove controls
 c_add, c_remove = st.columns(2)
 with c_add:
     if st.button("➕ Add Leg"):
@@ -228,25 +204,23 @@ with c_remove:
         st.session_state.legs.pop()
 
 # =========================
-# LEG RENDERER
+# RENDER LEGS
 # =========================
 def render_leg(i, leg, col):
     with col.expander(f"Leg {i+1}", expanded=True):
         left, right = st.columns(2)
-
         with left:
-            leg["player"] = st.text_input("Player", leg.get("player",""), key=f"p{i}")
-            leg["loc"]    = st.selectbox("Home/Away", ["All","Home Only","Away Only"],
-                                         index=["All","Home Only","Away Only"].index(leg.get("loc","All")), key=f"l{i}")
-            leg["range"]  = st.selectbox("Game Range", ["FULL","L10","L20"],
-                                         index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"r{i}")
-
+            # Dynamic player search (autocomplete)
+            current_idx = PLAYER_LIST.index(leg["player"]) if leg.get("player") in PLAYER_LIST else 0
+            leg["player"] = st.selectbox("Player", PLAYER_LIST, index=current_idx, key=f"p{i}")
+            leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away Only"],
+                                      index=["All","Home Only","Away Only"].index(leg.get("loc","All")), key=f"l{i}")
+            leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"],
+                                        index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"r{i}")
         with right:
-            leg["stat"]   = st.selectbox("Stat", list(STAT_LABELS.keys()),
-                                         index=list(STAT_LABELS.keys()).index(leg.get("stat","PTS")),
-                                         format_func=lambda k: STAT_LABELS[k], key=f"s{i}")
-
-            # Keep O/U and Threshold aligned by giving O/U less width
+            leg["stat"] = st.selectbox("Stat", list(STAT_LABELS.keys()),
+                                       index=list(STAT_LABELS.keys()).index(leg.get("stat","PTS")),
+                                       format_func=lambda k: STAT_LABELS[k], key=f"s{i}")
             c_ou, c_thr = st.columns([1,2])
             with c_ou:
                 leg["dir"] = st.selectbox("O/U", ["Over (≥)", "Under (≤)"],
@@ -254,11 +228,9 @@ def render_leg(i, leg, col):
             with c_thr:
                 leg["thr"] = st.number_input("Threshold", min_value=0, max_value=100,
                                              value=int(leg.get("thr",10)), key=f"t{i}")
+            leg["odds"] = st.number_input("FanDuel Odds", min_value=-10000, max_value=10000,
+                                          value=int(leg.get("odds",-110)), step=5, key=f"o{i}")
 
-            leg["odds"]  = st.number_input("FanDuel Odds", min_value=-10000, max_value=10000,
-                                           value=int(leg.get("odds",-110)), step=5, key=f"o{i}")
-
-# Render 3 legs per row
 for i in range(0, len(st.session_state.legs), 3):
     cols = st.columns(3)
     for j in range(3):
@@ -266,11 +238,15 @@ for i in range(0, len(st.session_state.legs), 3):
         if k < len(st.session_state.legs):
             render_leg(k, st.session_state.legs[k], cols[j])
 
-# Sidebar parlay odds when multiple legs
-parlay_odds = 0
+# =========================
+# PARLAY ODDS (Centered under legs, above Compute)
+# =========================
 if len(st.session_state.legs) > 1:
-    st.sidebar.markdown("---")
-    parlay_odds = st.sidebar.number_input("Combined Parlay Odds (+300, -150, ...)", value=0, step=5, key="parlay_odds")
+    st.markdown("---")
+    st.markdown("### 🎯 Combined Parlay Odds")
+    parlay_odds = st.number_input("Enter Parlay Odds (+300, -150, etc.)", value=0, step=5, key="parlay_odds")
+else:
+    parlay_odds = 0
 
 # =========================
 # COMPUTE
@@ -293,10 +269,9 @@ if st.button("Compute"):
     })
 
     for leg in st.session_state.legs:
-        name = leg["player"].strip()
+        name = (leg["player"] or "").strip()
         stat = leg["stat"]; thr = int(leg["thr"]); book = int(leg["odds"])
-        loc_key = leg.get("loc","All")
-        range_key = leg.get("range","FULL")
+        loc_key = leg.get("loc","All"); range_key = leg.get("range","FULL")
         direction = leg.get("dir","Over (≥)")
 
         pid = get_player_id(name) if name else None
@@ -327,12 +302,12 @@ if st.button("Compute"):
 
     st.markdown(f"""
 <div class="card {cls}">
-  <h2>💥 Combined Parlay — {', '.join(seasons) if seasons else '—'}</h2>
-  <div class="cond">Includes all selected legs with their individual filters</div>
+  <h2>💥 Combined Parlay</h2>
+  <div class="cond">Includes all selected legs</div>
   <div class="row">
     <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_p*100:.2f}%</div></div>
     <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
-    <div class="m"><div class="lab">Entered Parlay Odds</div><div class="val">{parlay_odds if parlay_odds else '—'}</div></div>
+    <div class="m"><div class="lab">Entered Odds</div><div class="val">{parlay_odds if parlay_odds else '—'}</div></div>
     <div class="m"><div class="lab">Book Implied</div><div class="val">{'—' if entered_prob is None else f'{entered_prob*100:.2f}%'}</div></div>
     <div class="m"><div class="lab">Expected Value</div><div class="val">{'—' if parlay_ev is None else f'{parlay_ev:.2f}%'}</div></div>
   </div>
@@ -355,13 +330,12 @@ if st.button("Compute"):
         stat_label = STAT_LABELS.get(r["stat"], r["stat"])
         book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
         ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
-
         dir_word = "O" if r["dir"].startswith("Over") else "U"
         cond_text = f"{dir_word} {r['thr']} {stat_label.lower()} — {r['range']} — {r['loc'].replace(' Only','')}"
 
         st.markdown(f"""
 <div class="card {cls}">
-  <h2>{r['name']} — {', '.join(seasons) if seasons else '—'}</h2>
+  <h2>{r['name']}</h2>
   <div class="cond">Condition: {cond_text}</div>
   <div class="row">
     <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
@@ -370,11 +344,10 @@ if st.button("Compute"):
     <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
     <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
   </div>
-  <div class="chip">{'🔥 +EV Play Detected (by your model)' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
+  <div class="chip">{'🔥 +EV Play Detected' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
 </div>
 """, unsafe_allow_html=True)
 
-        # Histogram
         df_f = r["df"]
         if not df_f.empty and r["stat"] in df_f.columns:
             fig, ax = plt.subplots()
