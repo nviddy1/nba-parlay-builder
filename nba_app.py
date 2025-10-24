@@ -366,8 +366,13 @@ if st.button("Compute"):
     <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_p*100:.2f}%</div></div>
     <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
     <div class="m"><div class="lab">Entered Odds</div><div class="val">{parlay_odds if parlay_odds else '—'}</div></div>
-    <div class="m"><div class="lab">Book Implied</div><div class="val">{'—' if entered_prob is None else f'{entered_prob*100:.2f}%'}}</div></div>
-    <div class="m"><div class="lab">Expected Value</div><div class="val">{'—' if parlay_ev is None else f'{parlay_ev:.2f}%'}'</div></div>
+    <div class="m"><div class="lab">Book Implied</div><div class="val">
+{('-' if entered_prob is None else str(round(entered_prob*100, 2)) + '%')}
+</div></div>
+<div class="m"><div class="lab">Expected Value</div><div class="val">
+{('—' if parlay_ev is None else str(round(parlay_ev, 2)) + '%')}
+</div></div>
+
   </div>
   <div class="chip">{'🔥 +EV Parlay Detected' if (parlay_ev is not None and parlay_ev>=0) else ('⚠️ Negative EV Parlay' if parlay_ev is not None else 'ℹ️ Enter parlay odds')}</div>
 </div>
