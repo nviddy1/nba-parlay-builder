@@ -262,7 +262,7 @@ def render_leg(i, leg, col):
     thr = float(leg.get("thr", 0.0))
     odds = leg.get("odds", "")
     sym = "O" if str(leg.get("dir","O")).startswith("O") else "U"
-    header = f"{name} — {thr:.1f}{sym} {stat_label} ({odds})" if name else f"Leg {i+1}"
+    header = f"{name} — {sym} {str(thr).rstrip('0').rstrip('.')} {stat_label} ({odds})" if name else f"Leg {i+1}"
 
     with col.expander(header, expanded=True):
         left, right = st.columns(2)
@@ -283,14 +283,13 @@ def render_leg(i, leg, col):
                                           index=["O", "U"].index(str(leg.get("dir","O"))), key=f"d{i}")
             with c_thr:
                 leg["thr"] = st.number_input("Threshold", min_value=0.0, max_value=100.0,
-                                             value=float(leg.get("thr",10.5)), step=0.5, key=f"t{i}")
+                             value=float(leg.get("thr",10.5)), step=0.5, format="%.1f", key=f"t{i}")
             entered_odds = st.number_input("Sportsbook Odds", min_value=-10000, max_value=10000,
                                            value=int(leg.get("odds",-110)), step=5, key=f"o{i}")
             fixed_odds = normalize_american_odds(entered_odds)
             if fixed_odds != entered_odds:
                 st.session_state[f"o{i}"] = fixed_odds
             leg["odds"] = fixed_odds
-            st.caption("Odds must be ≤ –100 or ≥ +100")
 
 for i in range(0, len(st.session_state.legs), 3):
     cols = st.columns(3)
