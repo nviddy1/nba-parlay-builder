@@ -213,30 +213,85 @@ with c_remove:
 # RENDER LEGS
 # =========================
 def render_leg(i, leg, col):
-    with col.expander(f"Leg {i+1}", expanded=True):
-        left, right = st.columns(2)
-        with left:
-            # Dynamic player search (autocomplete)
-            current_idx = PLAYER_LIST.index(leg["player"]) if leg.get("player") in PLAYER_LIST else 0
-            leg["player"] = st.selectbox("Player", PLAYER_LIST, index=current_idx, key=f"p{i}")
-            leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away Only"],
-                                      index=["All","Home Only","Away Only"].index(leg.get("loc","All")), key=f"l{i}")
-            leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"],
-                                        index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"r{i}")
-        with right:
-            leg["stat"] = st.selectbox("Stat", list(STAT_LABELS.keys()),
-                                       index=list(STAT_LABELS.keys()).index(leg.get("stat","PTS")),
-                                       format_func=lambda k: STAT_LABELS[k], key=f"s{i}")
-            c_ou, c_thr = st.columns([1,2])
-            with c_ou:
-                leg["dir"] = st.selectbox("O/U", ["Over (≥)", "Under (≤)"],
-                                          index=["Over (≥)","Under (≤)"].index(leg.get("dir","Over (≥)")), key=f"d{i}")
-            with c_thr:
-                leg["thr"] = st.number_input("Threshold", min_value=0, max_value=100,
-                                             value=int(leg.get("thr",10)), key=f"t{i}")
-            leg["odds"] = st.number_input("FanDuel Odds", min_value=-10000, max_value=10000,
-                                          value=int(leg.get("odds",-110)), step=5, key=f"o{i}")
+    # ---- Build dynamic header ----
+    name = (leg.get("player") or "").strip()
+    stat_key = leg.get("stat", "PTS")
+    stat_label = STAT_LABELS.get(stat_key, stat_key)
+    thr = int(leg.get("thr", 0))
+    odds = leg.get("odds", "")
+    dir_is_over = str(leg.get("dir", "Over")).startswith("Over")
+    sym = "≥" if dir_is_over else "≤"
 
+    header = f"{name} — {thr}{sym} {stat_label} ({odds})" if name else f"Leg {i+1}"
+
+    with col.expander(header, expanded=True):
+        left, right = st.columns(2)
+
+        # ----- LEFT column -----
+        with left:
+            # Autocomplete player list
+            current_idx = PLAYER_LIST.index(leg["player"]) if leg.get("player") in PLAYER_LIST else 0
+            leg["player"] = st.selectbox(
+                "Player",
+                PLAYER_LIST,
+                index=current_idx,
+                key=f"p{i}",
+                help="Start typing to search"
+            )
+
+            leg["loc"] = st.selectbox(
+                "Home/Away",
+                ["All", "Home Only", "Away Only"],
+                index=["All", "Home Only", "Away Only"].index(leg.get("loc", "All")),
+                key=f"l{i}",
+            )
+
+            leg["range"] = st.selectbox(
+                "Game Range",
+                ["FULL", "L10", "L20"],
+                index=["FULL", "L10", "L20"].index(leg.get("range", "FULL")),
+                key=f"r{i}",
+            )
+
+        # ----- RIGHT column -----
+        with right:
+            leg["stat"] = st.selectbox(
+                "Stat",
+                list(STAT_LABELS.keys()),
+                index=list(STAT_LABELS.keys()).index(leg.get("stat", "PTS")),
+                format_func=lambda k: STAT_LABELS[k],
+                key=f"s{i}",
+            )
+
+            c_ou, c_thr = st.columns([1, 2])
+            with c_ou:
+                # Keep labels with symbols so compute()'s .startswith("Under") still works
+                leg["dir"] = st.selectbox(
+                    "O/U",
+                    ["Over (≥)", "Under (≤)"],
+                    index=["Over (≥)", "Under (≤)"].index(leg.get("dir", "Over (≥)")),
+                    key=f"d{i}",
+                )
+            with c_thr:
+                leg["thr"] = st.number_input(
+                    "Threshold",
+                    min_value=0,
+                    max_value=100,
+                    value=int(leg.get("thr", 10)),
+                    key=f"t{i}",
+                )
+
+            leg["odds"] = st.number_input(
+                "FanDuel Odds",
+                min_value=-10000,
+                max_value=10000,
+                value=int(leg.get("odds", -110)),
+                step=5,
+                key=f"o{i}",
+            )
+
+
+# Render 3 legs per row
 for i in range(0, len(st.session_state.legs), 3):
     cols = st.columns(3)
     for j in range(3):
