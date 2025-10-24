@@ -359,7 +359,7 @@ if st.button("Compute"):
 
         stat_label = STAT_LABELS.get(r["stat"], r["stat"])
         book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
-        ev_disp = "—" if r["ev"] is None else f"{r['ev"]:.2f}%"
+        ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
         dir_word = "O" if r["dir"].startswith("Over") else "U"
         cond_text = f"{dir_word} {r['thr']} {stat_label.lower()} — {r['range']} — {r['loc'].replace(' Only','')}"
 
