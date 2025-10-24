@@ -109,12 +109,25 @@ def get_all_player_names():
     try:
         all_players = players.get_active_players()
     except Exception:
-        all_players = players.get_players()  # fallback, includes retired
+        all_players = players.get_players()
     return sorted({p.get("full_name") for p in all_players if p.get("full_name")})
 
-PLAYER_LIST = [""] + get_all_player_names()  # leading blank for unselected
+PLAYER_LIST = [""] + get_all_player_names()
 
-STAT_LABELS = {"PTS":"Points","REB":"Rebounds","AST":"Assists","STL":"Steals","BLK":"Blocks","FG3M":"3PM"}
+STAT_LABELS = {
+    "PTS": "Points",
+    "REB": "Rebounds",
+    "AST": "Assists",
+    "STL": "Steals",
+    "BLK": "Blocks",
+    "FG3M": "3PM",
+    "P+R": "Points + Rebounds",
+    "P+A": "Points + Assists",
+    "R+A": "Rebounds + Assists",
+    "PRA": "Points + Rebounds + Assists",
+    "DoubDoub": "Double-Double",
+    "TripDoub": "Triple-Double"
+}
 
 def get_player_id(name: str):
     if not name:
@@ -139,7 +152,7 @@ def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
             pass
     if not dfs: return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
-    for k in STAT_LABELS.keys():
+    for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
         if k in df.columns: df[k] = pd.to_numeric(df[k], errors="coerce")
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     if "GAME_DATE" in df.columns:
@@ -167,18 +180,26 @@ def calc_prob(df, stat, thr, min_minutes, loc_filter, range_key, direction):
         d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
     elif loc_filter == "Away Only":
         d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-    # ✅ FIX: correct sort call
     d = d.sort_values("GAME_DATE_DT", ascending=False)
-    if range_key == "L10":
-        d = d.head(10)
-    elif range_key == "L20":
-        d = d.head(20)
+    if range_key == "L10": d = d.head(10)
+    elif range_key == "L20": d = d.head(20)
+
+    # Derived stats
+    if "PTS" in d.columns and "REB" in d.columns and "AST" in d.columns:
+        d["P+R"] = d["PTS"] + d["REB"]
+        d["P+A"] = d["PTS"] + d["AST"]
+        d["R+A"] = d["REB"] + d["AST"]
+        d["PRA"] = d["PTS"] + d["REB"] + d["AST"]
+        d["DoubDoub"] = ((d["PTS"] >= 10) & (d["REB"] >= 10) |
+                         (d["PTS"] >= 10) & (d["AST"] >= 10) |
+                         (d["REB"] >= 10) & (d["AST"] >= 10)).astype(int)
+        d["TripDoub"] = ((d["PTS"] >= 10) & (d["REB"] >= 10) & (d["AST"] >= 10)).astype(int)
+
     total = len(d)
     if total == 0 or stat not in d.columns:
         return 0.0, 0, total, d
     hits = (d[stat] <= thr).sum() if direction.startswith("Under") else (d[stat] >= thr).sum()
     return hits / total, int(hits), int(total), d
-
 
 # =========================
 # SIDEBAR FILTERS
@@ -193,16 +214,15 @@ with st.sidebar:
 # =========================
 if "legs" not in st.session_state:
     st.session_state.legs = [{
-        "player":"", "stat":"PTS", "dir":"Over (≥)", "thr":10,
+        "player":"", "stat":"PTS", "dir":"Over (≥)", "thr":10.5,
         "odds":-110, "loc":"All", "range":"FULL"
     }]
 
-# Add/Remove controls
 c_add, c_remove = st.columns(2)
 with c_add:
     if st.button("➕ Add Leg"):
         st.session_state.legs.append({
-            "player":"", "stat":"PTS", "dir":"Over (≥)", "thr":10,
+            "player":"", "stat":"PTS", "dir":"Over (≥)", "thr":10.5,
             "odds":-110, "loc":"All", "range":"FULL"
         })
 with c_remove:
@@ -213,85 +233,38 @@ with c_remove:
 # RENDER LEGS
 # =========================
 def render_leg(i, leg, col):
-    # ---- Build dynamic header ----
     name = (leg.get("player") or "").strip()
     stat_key = leg.get("stat", "PTS")
     stat_label = STAT_LABELS.get(stat_key, stat_key)
-    thr = int(leg.get("thr", 0))
+    thr = leg.get("thr", 0.0)
     odds = leg.get("odds", "")
     dir_is_over = str(leg.get("dir", "Over")).startswith("Over")
     sym = "≥" if dir_is_over else "≤"
-
     header = f"{name} — {thr}{sym} {stat_label} ({odds})" if name else f"Leg {i+1}"
 
     with col.expander(header, expanded=True):
         left, right = st.columns(2)
-
-        # ----- LEFT column -----
         with left:
-            # Autocomplete player list
             current_idx = PLAYER_LIST.index(leg["player"]) if leg.get("player") in PLAYER_LIST else 0
-            leg["player"] = st.selectbox(
-                "Player",
-                PLAYER_LIST,
-                index=current_idx,
-                key=f"p{i}",
-                help="Start typing to search"
-            )
-
-            leg["loc"] = st.selectbox(
-                "Home/Away",
-                ["All", "Home Only", "Away Only"],
-                index=["All", "Home Only", "Away Only"].index(leg.get("loc", "All")),
-                key=f"l{i}",
-            )
-
-            leg["range"] = st.selectbox(
-                "Game Range",
-                ["FULL", "L10", "L20"],
-                index=["FULL", "L10", "L20"].index(leg.get("range", "FULL")),
-                key=f"r{i}",
-            )
-
-        # ----- RIGHT column -----
+            leg["player"] = st.selectbox("Player", PLAYER_LIST, index=current_idx, key=f"p{i}")
+            leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away Only"],
+                                      index=["All","Home Only","Away Only"].index(leg.get("loc","All")), key=f"l{i}")
+            leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"],
+                                        index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"r{i}")
         with right:
-            leg["stat"] = st.selectbox(
-                "Stat",
-                list(STAT_LABELS.keys()),
-                index=list(STAT_LABELS.keys()).index(leg.get("stat", "PTS")),
-                format_func=lambda k: STAT_LABELS[k],
-                key=f"s{i}",
-            )
-
-            c_ou, c_thr = st.columns([1, 2])
+            leg["stat"] = st.selectbox("Stat", list(STAT_LABELS.keys()),
+                                       index=list(STAT_LABELS.keys()).index(leg.get("stat","PTS")),
+                                       format_func=lambda k: STAT_LABELS[k], key=f"s{i}")
+            c_ou, c_thr = st.columns([1,2])
             with c_ou:
-                # Keep labels with symbols so compute()'s .startswith("Under") still works
-                leg["dir"] = st.selectbox(
-                    "O/U",
-                    ["Over (≥)", "Under (≤)"],
-                    index=["Over (≥)", "Under (≤)"].index(leg.get("dir", "Over (≥)")),
-                    key=f"d{i}",
-                )
+                leg["dir"] = st.selectbox("O/U", ["Over (≥)", "Under (≤)"],
+                                          index=["Over (≥)","Under (≤)"].index(leg.get("dir","Over (≥)")), key=f"d{i}")
             with c_thr:
-                leg["thr"] = st.number_input(
-                    "Threshold",
-                    min_value=0,
-                    max_value=100,
-                    value=int(leg.get("thr", 10)),
-                    key=f"t{i}",
-                )
+                leg["thr"] = st.number_input("Threshold", min_value=0.0, max_value=100.0,
+                                             value=float(leg.get("thr",10.5)), step=0.5, key=f"t{i}")
+            leg["odds"] = st.number_input("Sportsbook Odds", min_value=-10000, max_value=10000,
+                                          value=int(leg.get("odds",-110)), step=5, key=f"o{i}")
 
-            leg["odds"] = st.number_input(
-                "FanDuel Odds",
-                min_value=-10000,
-                max_value=10000,
-                value=int(leg.get("odds", -110)),
-                step=5,
-                key=f"o{i}",
-            )
-
-
-# Render 3 legs per row
 for i in range(0, len(st.session_state.legs), 3):
     cols = st.columns(3)
     for j in range(3):
@@ -314,11 +287,9 @@ else:
 # =========================
 if st.button("Compute"):
     st.markdown("---")
-
     rows = []
     probs_for_parlay = []
 
-    # Dark plot theme
     plt.rcParams.update({
         "axes.facecolor": "#1e1f22",
         "figure.facecolor": "#1e1f22",
@@ -331,7 +302,7 @@ if st.button("Compute"):
 
     for leg in st.session_state.legs:
         name = (leg["player"] or "").strip()
-        stat = leg["stat"]; thr = int(leg["thr"]); book = int(leg["odds"])
+        stat = leg["stat"]; thr = float(leg["thr"]); book = int(leg["odds"])
         loc_key = leg.get("loc","All"); range_key = leg.get("range","FULL")
         direction = leg.get("dir","Over (≥)")
 
@@ -353,7 +324,6 @@ if st.button("Compute"):
             "ev":ev, "df":df_filt, "loc":loc_key, "range":range_key, "dir":direction
         })
 
-    # ---------- Combined Parlay ----------
     combined_p = float(np.prod(probs_for_parlay)) if probs_for_parlay else 0.0
     combined_fair = prob_to_american(combined_p) if combined_p>0 else "N/A"
     entered_prob = american_to_implied(parlay_odds)
@@ -378,7 +348,6 @@ if st.button("Compute"):
 
     st.markdown("---")
 
-    # ---------- Individual Legs ----------
     for r in rows:
         if not r.get("ok"):
             st.warning(f"Could not find player: **{r['name']}**")
@@ -390,7 +359,7 @@ if st.button("Compute"):
 
         stat_label = STAT_LABELS.get(r["stat"], r["stat"])
         book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
-        ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
+        ev_disp = "—" if r["ev"] is None else f"{r['ev"]:.2f}%"
         dir_word = "O" if r["dir"].startswith("Over") else "U"
         cond_text = f"{dir_word} {r['thr']} {stat_label.lower()} — {r['range']} — {r['loc'].replace(' Only','')}"
 
@@ -401,7 +370,7 @@ if st.button("Compute"):
   <div class="row">
     <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
     <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{r['fair']}</div></div>
-    <div class="m"><div class="lab">FanDuel Odds</div><div class="val">{r['book']}</div></div>
+    <div class="m"><div class="lab">Sportsbook Odds</div><div class="val">{r['book']}</div></div>
     <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
     <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
   </div>
