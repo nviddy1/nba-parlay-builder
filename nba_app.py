@@ -159,20 +159,26 @@ def prob_to_american(p: float):
     return f"{int(round((-100*p/(1-p)) if p>0.5 else (100*(1-p)/p))):+}"
 
 def calc_prob(df, stat, thr, min_minutes, loc_filter, range_key, direction):
-    if df.empty: return 0.0, 0, 0, df
+    if df.empty:
+        return 0.0, 0, 0, df
     d = df.copy()
     d = d[d["MIN_NUM"] >= min_minutes]
     if loc_filter == "Home Only":
         d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
     elif loc_filter == "Away Only":
         d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-    d = d.sort_values("GAME_DATE_DT", descending=False).sort_values("GAME_DATE_DT", ascending=False)
-    if range_key == "L10": d = d.head(10)
-    elif range_key == "L20": d = d.head(20)
+    # ✅ FIX: correct sort call
+    d = d.sort_values("GAME_DATE_DT", ascending=False)
+    if range_key == "L10":
+        d = d.head(10)
+    elif range_key == "L20":
+        d = d.head(20)
     total = len(d)
-    if total==0 or stat not in d.columns: return 0.0, 0, total, d
+    if total == 0 or stat not in d.columns:
+        return 0.0, 0, total, d
     hits = (d[stat] <= thr).sum() if direction.startswith("Under") else (d[stat] >= thr).sum()
-    return hits/total, int(hits), int(total), d
+    return hits / total, int(hits), int(total), d
+
 
 # =========================
 # SIDEBAR FILTERS
