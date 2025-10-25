@@ -117,6 +117,7 @@ STAT_LABELS = {
     "PRA": "PRA",
 }
 
+# tokens accepted in the parser → stat code
 STAT_TOKENS = {
     "P": "PTS", "PTS": "PTS", "POINTS": "PTS",
     "R": "REB", "REB": "REB", "REBOUNDS": "REB",
@@ -141,6 +142,7 @@ def get_all_player_names():
             return sorted(set(names))
     except Exception:
         pass
+    # fallback
     all_p = players.get_players()
     names = [p["full_name"] for p in all_p if p.get("full_name")]
     return sorted(set(names))
@@ -148,16 +150,20 @@ def get_all_player_names():
 PLAYER_LIST = get_all_player_names()
 
 def best_player_match(query: str) -> str:
+    """Fuzzy match that prefers active roster names, tolerant of last-name only."""
     q = (query or "").strip()
     if not q:
         return ""
+    # try direct high-cutoff match
     m = process.extractOne(q, PLAYER_LIST, score_cutoff=80)
     if m:
         return m[0]
+    # try lower cutoff
     m = process.extractOne(q, PLAYER_LIST, score_cutoff=60)
     return m[0] if m else ""
 
-def american_to_implied(odds):
+def american_to_implied(odds: int | float | str):
+    """American odds -> implied probability (0..1) or None."""
     try:
         x = float(odds)
     except Exception:
@@ -169,6 +175,7 @@ def american_to_implied(odds):
     return abs(x)/(abs(x)+100.0)
 
 def prob_to_american(p: float):
+    """Probability (0..1) -> American odds as string or 'N/A'."""
     if p <= 0 or p >= 1:
         return "N/A"
     dec = 1.0/p
@@ -176,7 +183,8 @@ def prob_to_american(p: float):
         return f"+{int(round((dec-1)*100))}"
     return f"-{int(round(100/(dec-1)))}"
 
-def fmt_half(x):
+def fmt_half(x: float | int) -> str:
+    """Format 10.5 not 10.50."""
     try:
         v = float(x)
         return f"{v:.1f}".rstrip("0").rstrip(".")
@@ -184,11 +192,18 @@ def fmt_half(x):
         return str(x)
 
 def parse_input_line(text: str):
+    """
+    Parse free-text like:  'Maxey O 24.5 P Away -120'
+                          'Durant U 25.5 P Home -110'
+                          'Jokic O 10.5 R+A -105'
+                          'Al Horford O 0.5 3PM Away +140'
+    """
     t = (text or "").strip()
     if not t:
         return None
 
-    parts = t.replace("/", "+").split()
+    parts = t.replace("/", "+").split()  # allow "P/R" style to map to P+R
+    # Direction
     dir_token = None
     for token in parts:
         if token.upper() in ["O", "OVER"]:
@@ -198,11 +213,12 @@ def parse_input_line(text: str):
             dir_token = "Under"
             break
     if not dir_token:
-        dir_token = "Over"
+        dir_token = "Over"  # default
 
+    # Threshold (first numeric-ish)
     thr = None
     for token in parts:
-        tok = token.replace("+", "")
+        tok = token.replace("+", "")  # keep odds intact
         try:
             if any(c.isdigit() for c in tok) and ("." in tok or tok.isdigit()):
                 thr = float(tok)
@@ -212,7 +228,9 @@ def parse_input_line(text: str):
     if thr is None:
         thr = 10.5
 
+    # Stat (single or combined)
     stat_code = None
+    # look for combined tokens like P+R, R+A, P+A, PRA
     combined_aliases = ["P+R", "P+A", "R+A", "PRA", "PR", "PA", "RA"]
     for token in parts:
         up = token.upper()
@@ -220,6 +238,7 @@ def parse_input_line(text: str):
             stat_code = STAT_TOKENS.get(up, up)
             break
     if not stat_code:
+        # single stats or special
         for token in parts:
             up = token.upper()
             if up in STAT_TOKENS:
@@ -228,6 +247,7 @@ def parse_input_line(text: str):
     if not stat_code:
         stat_code = "PTS"
 
+    # Location
     loc = "All"
     for token in parts:
         up = token.upper()
@@ -238,6 +258,7 @@ def parse_input_line(text: str):
             loc = "Home Only"
             break
 
+    # Odds
     odds = -110
     for token in parts[::-1]:
         if token.startswith("+") or token.startswith("-"):
@@ -249,6 +270,7 @@ def parse_input_line(text: str):
             except Exception:
                 continue
 
+    # Player name = everything else (best fuzzy match)
     banned = set(["O", "OVER", "U", "UNDER", "HOME", "H", "AWAY", "A"] + list(STAT_TOKENS.keys()) + combined_aliases)
     name_tokens = [p for p in parts if (p.upper() not in banned and not p.replace(".", "", 1).lstrip("+-").isdigit())]
     name_guess = " ".join(name_tokens).strip()
@@ -256,15 +278,15 @@ def parse_input_line(text: str):
 
     return {
         "player": player,
-        "dir": dir_token,
+        "dir": dir_token,           # 'Over' | 'Under'
         "thr": float(thr),
-        "stat": stat_code,
-        "loc": loc,
-        "range": "FULL",
+        "stat": stat_code,          # STAT_LABELS key
+        "loc": loc,                 # 'All' | 'Home Only' | 'Away'
+        "range": "FULL",            # keep for future; L10/L20 support easy plug-in
         "odds": int(odds)
     }
 
-def get_player_id(full_name):
+def get_player_id(full_name: str):
     if not full_name:
         return None
     res = players.find_players_by_full_name(full_name)
@@ -279,7 +301,7 @@ def to_minutes(val):
     except Exception:
         return 0
 
-def fetch_gamelog(player_id, seasons):
+def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
     dfs = []
     for s in seasons:
         try:
@@ -290,6 +312,7 @@ def fetch_gamelog(player_id, seasons):
     if not dfs:
         return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
+    # typing
     for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
@@ -300,7 +323,8 @@ def fetch_gamelog(player_id, seasons):
         df["GAME_DATE_DT"] = pd.Timestamp.now()
     return df
 
-def compute_stat_series(df, stat_code):
+def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
+    """Return a numeric series for any supported stat_code."""
     s = pd.Series(dtype=float, index=df.index)
     if stat_code in ["PTS","REB","AST","STL","BLK","FG3M"]:
         s = df[stat_code].astype(float)
@@ -313,25 +337,41 @@ def compute_stat_series(df, stat_code):
     elif stat_code == "PRA":
         s = (df["PTS"] + df["REB"] + df["AST"]).astype(float)
     elif stat_code == "DOUBDOUB":
+        # indicator: at least two of PTS/REB/AST >= 10 (classic)
         pts = (df["PTS"] >= 10).astype(int)
         reb = (df["REB"] >= 10).astype(int)
         ast = (df["AST"] >= 10).astype(int)
-        s = ((pts + reb + ast) >= 2).astype(int)
+        s = (pts + reb + ast) >= 2
+        s = s.astype(int)
     elif stat_code == "TRIPDOUB":
         pts = (df["PTS"] >= 10).astype(int)
         reb = (df["REB"] >= 10).astype(int)
         ast = (df["AST"] >= 10).astype(int)
-        s = ((pts + reb + ast) >= 3).astype(int)
+        s = (pts + reb + ast) >= 3
+        s = s.astype(int)
     else:
         s = df["PTS"].astype(float)
     return s
 
-def leg_probability(df, stat_code, direction, thr):
+def leg_probability(df: pd.DataFrame, stat_code: str, direction: str, thr: float) -> tuple[float,int,int]:
+    """
+    Returns (probability, hits, total) for O/U at threshold.
+    For DOUBDOUB/TRIPDOUB, ignores 'thr' and uses the indicator series (>=1).
+    """
     ser = compute_stat_series(df, stat_code)
+
     if stat_code in ["DOUBDOUB", "TRIPDOUB"]:
-        hits = int((ser <= 0.5).sum()) if direction == "Under" else int((ser >= 0.5).sum())
+        # treat threshold as 1.0 indicator; direction Over means >=1; Under means 0
+        if direction == "Under":
+            hits = int((ser <= 0.5).sum())
+        else:
+            hits = int((ser >= 0.5).sum())
     else:
-        hits = int((ser <= thr).sum()) if direction == "Under" else int((ser >= thr).sum())
+        if direction == "Under":
+            hits = int((ser <= thr).sum())
+        else:
+            hits = int((ser >= thr).sum())
+
     total = int(ser.notna().sum())
     p = hits/total if total else 0.0
     return p, hits, total
@@ -348,7 +388,7 @@ with st.sidebar:
 # STATE
 # =========================
 if "legs" not in st.session_state:
-    st.session_state.legs = []
+    st.session_state.legs = []  # list of dict legs
 if "awaiting_input" not in st.session_state:
     st.session_state.awaiting_input = True
 
@@ -365,47 +405,44 @@ with c2:
 
 st.write("**Input bet**")
 
-# 1) Render existing legs (Leg 1 on top)
+# 1) Render existing legs (Leg 1 on top), each with remove + edit
 if st.session_state.legs:
     for i, leg in enumerate(st.session_state.legs):
         leg_no = i + 1
         dir_short = "O" if leg["dir"] == "Over" else "U"
-        stat_label = STAT_LABELS.get(leg["stat"], leg["stat"])
-        header = f"Leg {leg_no}: {leg['player']} — {dir_short} {fmt_half(leg['thr'])} {stat_label} ({leg['loc']}, {leg['odds']})"
-
-        with st.expander(header, expanded=True):
+        header = f"Leg {leg_no}: {leg['player']} — {dir_short} {fmt_half(leg['thr'])} {STAT_LABELS.get(leg['stat'], leg['stat'])} ({leg['loc']}, {leg['odds']})"
+        with st.expander(header, expanded=False):
             cL, cR = st.columns([2,1])
             with cL:
-                leg["player"] = st.text_input("Player", value=leg["player"], key=f"player_{i}", placeholder="Enter player name")
-                leg["stat"] = st.selectbox("Stat", list(STAT_LABELS.keys()), index=list(STAT_LABELS.keys()).index(leg["stat"]), key=f"stat_{i}")
-                leg["dir"] = st.selectbox("O/U", ["Over","Under"], index=(0 if leg["dir"]=="Over" else 1), key=f"dir_{i}")
-                leg["thr"] = st.number_input("Threshold", value=float(leg["thr"]), step=0.5, key=f"thr_{i}")
+                leg["player"] = st.text_input("Player", value=leg["player"], key=f"player_{i}")
+                leg["stat"]   = st.selectbox("Stat", list(STAT_LABELS.keys()),
+                                             index=list(STAT_LABELS.keys()).index(leg["stat"]), key=f"stat_{i}")
+                leg["dir"]    = st.selectbox("O/U", ["Over","Under"], index=(0 if leg["dir"]=="Over" else 1), key=f"dir_{i}")
+                leg["thr"]    = st.number_input("Threshold", value=float(leg["thr"]), step=0.5, key=f"thr_{i}")
             with cR:
-                leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away"], index=["All","Home Only","Away"].index(leg["loc"]), key=f"loc_{i}")
-                leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"], index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}")
-                leg["odds"] = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}")
-                rm_col, _ = st.columns([1,5])
-                with rm_col:
-                    if st.button(f"❌ Remove Leg {leg_no}", key=f"remove_{i}"):
-                        st.session_state.legs.pop(i)
-                        st.rerun()
+                leg["loc"]    = st.selectbox("Home/Away", ["All","Home Only","Away"],
+                                             index=["All","Home Only","Away"].index(leg["loc"]), key=f"loc_{i}")
+                leg["range"]  = st.selectbox("Game Range", ["FULL","L10","L20"],
+                                             index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}")
+                leg["odds"]   = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}")
 
-# 2) Show the input field only when awaiting input
+            rm_col, _ = st.columns([1,5])
+            with rm_col:
+                if st.button(f"❌ Remove Leg {leg_no}", key=f"remove_{i}"):
+                    st.session_state.legs.pop(i)
+                    st.rerun()
+
+# 2) Show the input field only when “awaiting_input” is True
 if st.session_state.awaiting_input:
-    bet_text = st.text_input(
-        "Input bet",
-        placeholder="Maxey O 24.5 P Away -110 OR Embiid PRA U 35.5 -130",
-        key="freeform_input",
-        label_visibility="collapsed"
-    )
+    bet_text = st.text_input("e.g. Maxey O 24.5 P Away -120", key="freeform_input", label_visibility="collapsed")
     if bet_text.strip():
         parsed = parse_input_line(bet_text)
         if parsed and parsed["player"]:
-            st.session_state.legs.append(parsed)
+            st.session_state.legs.append(parsed)  # append so it shows under existing legs
             st.session_state.awaiting_input = False
             st.rerun()
 
-# Combined parlay odds input
+# Combined parlay odds only when multiple legs exist
 parlay_odds = 0
 if len(st.session_state.legs) > 1:
     st.markdown("### 🎯 Combined Parlay Odds")
@@ -442,7 +479,7 @@ if st.session_state.legs and st.button("Compute"):
         odds = int(leg["odds"])
 
         if not pid:
-            rows.append({"ok": False, "name": name or "Unknown", "reason": "No player match"})
+            rows.append({"ok": False, "name": name or "Unknown"})
             continue
 
         df = fetch_gamelog(pid, seasons)
@@ -453,11 +490,10 @@ if st.session_state.legs and st.button("Compute"):
         # filters
         d = df.copy()
         d = d[d["MIN_NUM"] >= min_minutes]
-        if "MATCHUP" in d.columns:
-            if loc == "Home Only":
-                d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
-            elif loc == "Away":
-                d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
+        if loc == "Home Only":
+            d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+        elif loc == "Away":
+            d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
         d = d.sort_values("GAME_DATE_DT", ascending=False)
         if rng == "L10":
             d = d.head(10)
@@ -510,7 +546,7 @@ if st.session_state.legs and st.button("Compute"):
     # ---------- Individual legs ----------
     for r in rows:
         if not r.get("ok"):
-            st.warning(f"Could not compute for **{r.get('name','Unknown')}** — {r.get('reason','')}")
+            st.warning(f"Could not compute for **{r.get('name','Unknown')}**")
             continue
 
         cls = "neutral"
@@ -543,9 +579,8 @@ if st.session_state.legs and st.button("Compute"):
         if not dff.empty and r["stat"] not in ["DOUBDOUB","TRIPDOUB"]:
             ser = compute_stat_series(dff, r["stat"])
             fig, ax = plt.subplots()
-            # Color to reflect EV status
-            color = "#00c896" if (r["ev"] is not None and r["ev"] >= 0) else "#e05a5a"
-            ax.hist(ser, bins=20, edgecolor="white", color=color)
+            ax.hist(ser, bins=20, edgecolor="white",
+                    color=("#00c896" if (r["ev"] is not None and r["ev"]>=0) else "#e05a5a"))
             ax.axvline(r["thr"], color="w", linestyle="--", label=f"Threshold {fmt_half(r['thr'])}")
             ax.set_title(f"{r['name']} — {stat_label}")
             ax.set_xlabel(stat_label); ax.set_ylabel("Games"); ax.legend()
