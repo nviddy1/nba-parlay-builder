@@ -1,11 +1,12 @@
+# nba_app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import re
-from rapidfuzz import fuzz, process
+
 from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
+from rapidfuzz import process
 
 # =========================
 # PAGE CONFIG
@@ -14,7 +15,7 @@ st.set_page_config(page_title="NBA Player Prop Parlay Builder", page_icon="🏀"
 st.title("🏀 NBA Player Prop Parlay Builder")
 
 # =========================
-# STYLING — DARK MODE
+# THEME / CSS
 # =========================
 st.markdown("""
 <style>
@@ -36,20 +37,37 @@ body, .block-container { background: var(--bg); color: var(--text); }
   border-radius: 10px !important;
   font-weight: 700 !important;
   padding: 8px 14px !important;
+  font-size: 0.9rem !important;
   box-shadow: 0 6px 18px rgba(0,200,150,0.25) !important;
 }
 
-/* Expanders */
+/* Expander */
 .stExpander {
   border: 1px solid var(--border) !important;
   background: var(--card) !important;
   border-radius: 12px !important;
 }
-.streamlit-expanderHeader { font-weight: 800 !important; color: var(--text) !important; }
+.streamlit-expanderHeader {
+  font-weight: 800 !important;
+  color: var(--text) !important;
+  font-size: 0.95rem !important;
+}
+
+/* Inputs */
+input, select, textarea {
+  background: #202225 !important;
+  color: var(--text) !important;
+  border: 1px solid #3b3f45 !important;
+  border-radius: 8px !important;
+  font-size: 0.9rem !important;
+  padding: 6px !important;
+}
 
 /* Cards */
 .card {
-  padding: 20px; border-radius: 14px;
+  --pad-x: 20px; --pad-y: 18px;
+  padding: var(--pad-y) var(--pad-x);
+  border-radius: 14px;
   margin: 10px 0 20px 0;
   border: 1px solid var(--card-border);
   background: var(--card-bg);
@@ -57,112 +75,231 @@ body, .block-container { background: var(--bg); color: var(--text); }
   width: 100%;
 }
 .neutral { --card-bg:#222; --card-border:#777; }
-.pos { --card-bg:#0b3d23; --card-border:#00FF99; }
-.neg { --card-bg:#3d0b0b; --card-border:#FF5555; }
+.pos     { --card-bg:#0b3d23; --card-border:#00FF99; }
+.neg     { --card-bg:#3d0b0b; --card-border:#FF5555; }
 
-.card h2 { color:#fff; font-weight:800; margin-bottom:4px; }
-.cond { color:#a9b1bb; font-size:0.9rem; margin-bottom:10px; }
-.row { display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; }
-.m { min-width:140px; flex:1; }
-.lab { color:#cbd5e1; font-size:0.8rem; margin-bottom:4px; }
-.val { color:#fff; font-size:1.2rem; font-weight:800; }
+.card h2 { color:#fff; margin:0 0 6px 0; font-weight:800; font-size:1.05rem; }
+.cond { color:#a9b1bb; font-size:0.9rem; margin: 2px 0 10px 0; }
+
+.row {
+  display:flex; flex-wrap:wrap; gap:10px;
+  align-items:flex-end; justify-content:space-between;
+  margin: 6px 0 4px 0;
+}
+.m { min-width:120px; flex:1; }
+.lab { color:#cbd5e1; font-size:0.8rem; margin-bottom:2px; }
+.val { color:#fff; font-size:1.1rem; font-weight:800; line-height:1.1; }
+
 .chip {
   display:inline-block; margin-top:10px;
   padding:6px 12px; border-radius:999px;
   font-size:0.8rem; color:#a7f3d0; border:1px solid #16a34a33;
-}
-[data-baseweb="select"] span {
-  color: #fff !important;
-  font-size: 0.85rem !important;
+  background: transparent;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # =========================
-# HELPERS
+# CONSTANTS & HELPERS
 # =========================
+STAT_LABELS = {
+    "PTS": "Points",
+    "REB": "Rebounds",
+    "AST": "Assists",
+    "STL": "Steals",
+    "BLK": "Blocks",
+    "FG3M": "3PM",
+    "DOUBDOUB": "Doub Doub",
+    "TRIPDOUB": "Trip Doub",
+    "P+R": "P+R",
+    "P+A": "P+A",
+    "R+A": "R+A",
+    "PRA": "PRA",
+}
+
+# tokens accepted in the parser → stat code
+STAT_TOKENS = {
+    "P": "PTS", "PTS": "PTS", "POINTS": "PTS",
+    "R": "REB", "REB": "REB", "REBOUNDS": "REB",
+    "A": "AST", "AST": "AST", "ASSISTS": "AST",
+    "STL": "STL", "STEALS": "STL",
+    "BLK": "BLK", "BLOCKS": "BLK",
+    "3PM": "FG3M", "FG3M": "FG3M", "THREES": "FG3M",
+    "DOUBDOUB": "DOUBDOUB", "DOUBLEDOUBLE": "DOUBDOUB", "DOUB": "DOUBDOUB", "DD": "DOUBDOUB",
+    "TRIPDOUB": "TRIPDOUB", "TRIPLEDOUBLE": "TRIPDOUB", "TD": "TRIPDOUB",
+    "P+R": "P+R", "PR": "P+R",
+    "P+A": "P+A", "PA": "P+A",
+    "R+A": "R+A", "RA": "R+A",
+    "PRA": "PRA"
+}
+
 @st.cache_data
 def get_all_player_names():
     try:
-        all_players = players.get_active_players()
+        active = players.get_active_players()
+        names = [p["full_name"] for p in active if p.get("full_name")]
+        if names:
+            return sorted(set(names))
     except Exception:
-        all_players = players.get_players()
-    return sorted({p.get("full_name") for p in all_players if p.get("full_name")})
+        pass
+    # fallback
+    all_p = players.get_players()
+    names = [p["full_name"] for p in all_p if p.get("full_name")]
+    return sorted(set(names))
 
-PLAYER_LIST = [""] + get_all_player_names()
+PLAYER_LIST = get_all_player_names()
 
-STAT_LABELS = {
-    "PTS": "Points", "REB": "Rebounds", "AST": "Assists", "STL": "Steals", "BLK": "Blocks", "FG3M": "3PM",
-    "Doub Doub": "Double Double", "Trip Doub": "Triple Double",
-    "P+R": "Points + Rebounds", "P+A": "Points + Assists", "R+A": "Rebounds + Assists", "PRA": "Points + Rebounds + Assists"
-}
+def best_player_match(query: str) -> str:
+    """Fuzzy match that prefers active roster names, tolerant of last-name only."""
+    q = (query or "").strip()
+    if not q:
+        return ""
+    # try direct high-cutoff match
+    m = process.extractOne(q, PLAYER_LIST, score_cutoff=80)
+    if m:
+        return m[0]
+    # try lower cutoff
+    m = process.extractOne(q, PLAYER_LIST, score_cutoff=60)
+    return m[0] if m else ""
 
-def get_player_id(name: str):
-    if not name: return None
-    res = players.find_players_by_full_name(name)
-    return res[0]["id"] if res else None
-
-def normalize_american_odds(x: int) -> int:
+def american_to_implied(odds: int | float | str):
+    """American odds -> implied probability (0..1) or None."""
     try:
-        x = int(x)
-    except:
-        return 0
-    if -100 < x < 100:
-        return -100 if x < 0 else 100
-    return x
-
-def american_to_implied(odds):
-    if odds in (None, "", "0", 0): return None
-    try: x = float(odds)
-    except: return None
-    if -100 < x < 100: return None
-    return 100/(x+100) if x>0 else abs(x)/(abs(x)+100)
+        x = float(odds)
+    except Exception:
+        return None
+    if -99 < x < 100:
+        return None
+    if x > 0:
+        return 100.0/(x+100.0)
+    return abs(x)/(abs(x)+100.0)
 
 def prob_to_american(p: float):
-    if p<=0 or p>=1: return "N/A"
-    return f"{int(round((-100*p/(1-p)) if p>0.5 else (100*(1-p)/p))):+}"
+    """Probability (0..1) -> American odds as string or 'N/A'."""
+    if p <= 0 or p >= 1:
+        return "N/A"
+    dec = 1.0/p
+    if dec >= 2.0:
+        return f"+{int(round((dec-1)*100))}"
+    return f"-{int(round(100/(dec-1)))}"
 
-# =========================
-# RAPIDFUZZ PARSER (smarter name matching)
-# =========================
-def parse_bet_query(text, player_list):
-    text = text.strip()
-    if not text: return {}
+def fmt_half(x: float | int) -> str:
+    """Format 10.5 not 10.50."""
+    try:
+        v = float(x)
+        return f"{v:.1f}".rstrip("0").rstrip(".")
+    except Exception:
+        return str(x)
 
-    odds_match = re.search(r'([+-]\d{2,4})', text)
-    odds = int(odds_match.group(1)) if odds_match else -110
-    odds = normalize_american_odds(odds)
+def parse_input_line(text: str):
+    """
+    Parse free-text like:  'Maxey O 24.5 P Away -120'
+                          'Durant U 25.5 P Home -110'
+                          'Jokic O 10.5 R+A -105'
+                          'Al Horford O 0.5 3PM Away +140'
+    """
+    t = (text or "").strip()
+    if not t:
+        return None
 
-    direction = "O" if re.search(r'\b(o|over)\b', text, re.I) else ("U" if re.search(r'\b(u|under)\b', text, re.I) else "O")
-    threshold_match = re.search(r'(\d+(?:\.\d)?)', text)
-    threshold = float(threshold_match.group(1)) if threshold_match else 10.5
-    loc = "Away Only" if re.search(r'\b(away|road|@)\b', text, re.I) else ("Home Only" if re.search(r'\b(home|vs)\b', text, re.I) else "All")
+    parts = t.replace("/", "+").split()  # allow "P/R" style to map to P+R
+    # Direction
+    dir_token = None
+    for token in parts:
+        if token.upper() in ["O", "OVER"]:
+            dir_token = "Over"
+            break
+        if token.upper() in ["U", "UNDER"]:
+            dir_token = "Under"
+            break
+    if not dir_token:
+        dir_token = "Over"  # default
 
-    stat_aliases = {"P":"PTS","R":"REB","A":"AST","S":"STL","B":"BLK","3PM":"FG3M",
-                    "PR":"P+R","PA":"P+A","RA":"R+A","PRA":"PRA","DD":"Doub Doub","TD":"Trip Doub"}
-    stat_code = "PTS"
-    for alias, code in stat_aliases.items():
-        if re.search(rf'\b{alias}\b', text, re.I):
-            stat_code = code
+    # Threshold (first numeric-ish)
+    thr = None
+    for token in parts:
+        tok = token.replace("+", "")  # keep odds intact
+        try:
+            if any(c.isdigit() for c in tok) and ("." in tok or tok.isdigit()):
+                thr = float(tok)
+                break
+        except Exception:
+            pass
+    if thr is None:
+        thr = 10.5
+
+    # Stat (single or combined)
+    stat_code = None
+    # look for combined tokens like P+R, R+A, P+A, PRA
+    combined_aliases = ["P+R", "P+A", "R+A", "PRA", "PR", "PA", "RA"]
+    for token in parts:
+        up = token.upper()
+        if up in combined_aliases:
+            stat_code = STAT_TOKENS.get(up, up)
+            break
+    if not stat_code:
+        # single stats or special
+        for token in parts:
+            up = token.upper()
+            if up in STAT_TOKENS:
+                stat_code = STAT_TOKENS[up]
+                break
+    if not stat_code:
+        stat_code = "PTS"
+
+    # Location
+    loc = "All"
+    for token in parts:
+        up = token.upper()
+        if up in ["AWAY", "A"]:
+            loc = "Away"
+            break
+        if up in ["HOME", "H"]:
+            loc = "Home Only"
             break
 
-    # Smarter player detection (handles single name or partials)
-    tokens = re.findall(r"[a-zA-Z']+", text)
-    name_guess = " ".join([t for t in tokens if len(t) > 1][:3]).title()
-    matches = process.extract(name_guess, player_list, scorer=fuzz.partial_ratio, limit=3)
-    player = matches[0][0] if matches and matches[0][1] >= 70 else ""
+    # Odds
+    odds = -110
+    for token in parts[::-1]:
+        if token.startswith("+") or token.startswith("-"):
+            try:
+                o = int(token)
+                if o <= -100 or o >= 100:
+                    odds = o
+                break
+            except Exception:
+                continue
 
-    return {"player":player,"stat":stat_code,"dir":direction,"thr":threshold,"odds":odds,"loc":loc,"range":"FULL"}
+    # Player name = everything else (best fuzzy match)
+    banned = set(["O", "OVER", "U", "UNDER", "HOME", "H", "AWAY", "A"] + list(STAT_TOKENS.keys()) + combined_aliases)
+    name_tokens = [p for p in parts if (p.upper() not in banned and not p.replace(".", "", 1).lstrip("+-").isdigit())]
+    name_guess = " ".join(name_tokens).strip()
+    player = best_player_match(name_guess)
 
-# =========================
-# FETCH DATA & CALC PROB
-# =========================
+    return {
+        "player": player,
+        "dir": dir_token,           # 'Over' | 'Under'
+        "thr": float(thr),
+        "stat": stat_code,          # STAT_LABELS key
+        "loc": loc,                 # 'All' | 'Home Only' | 'Away'
+        "range": "FULL",            # keep for future; L10/L20 support easy plug-in
+        "odds": int(odds)
+    }
+
+def get_player_id(full_name: str):
+    if not full_name:
+        return None
+    res = players.find_players_by_full_name(full_name)
+    return res[0]["id"] if res else None
+
 def to_minutes(val):
     try:
         s = str(val)
-        if ":" in s: return int(s.split(":")[0])
+        if ":" in s:
+            return int(s.split(":")[0])
         return int(float(s))
-    except: return 0
+    except Exception:
+        return 0
 
 def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
     dfs = []
@@ -172,28 +309,72 @@ def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
             dfs.append(g)
         except Exception:
             pass
-    if not dfs: return pd.DataFrame()
+    if not dfs:
+        return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
+    # typing
     for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
-        if k in df.columns: df[k] = pd.to_numeric(df[k], errors="coerce")
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     if "GAME_DATE" in df.columns:
         df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
+    else:
+        df["GAME_DATE_DT"] = pd.Timestamp.now()
     return df
 
-def calc_prob(df, stat, thr, min_minutes, loc_filter, range_key, direction):
-    if df.empty: return 0.0,0,0,df
-    d = df.copy()
-    d = d[d["MIN_NUM"] >= min_minutes]
-    if loc_filter == "Home Only": d = d[d["MATCHUP"].str.contains("vs", regex=False)]
-    elif loc_filter == "Away Only": d = d[d["MATCHUP"].str.contains("@", regex=False)]
-    d = d.sort_values("GAME_DATE_DT", ascending=False)
-    if range_key == "L10": d = d.head(10)
-    elif range_key == "L20": d = d.head(20)
-    total = len(d)
-    if total==0 or stat not in d.columns: return 0.0,0,total,d
-    hits = (d[stat] <= thr).sum() if direction == "U" else (d[stat] >= thr).sum()
-    return hits/total, int(hits), int(total), d
+def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
+    """Return a numeric series for any supported stat_code."""
+    s = pd.Series(dtype=float, index=df.index)
+    if stat_code in ["PTS","REB","AST","STL","BLK","FG3M"]:
+        s = df[stat_code].astype(float)
+    elif stat_code == "P+R":
+        s = (df["PTS"] + df["REB"]).astype(float)
+    elif stat_code == "P+A":
+        s = (df["PTS"] + df["AST"]).astype(float)
+    elif stat_code == "R+A":
+        s = (df["REB"] + df["AST"]).astype(float)
+    elif stat_code == "PRA":
+        s = (df["PTS"] + df["REB"] + df["AST"]).astype(float)
+    elif stat_code == "DOUBDOUB":
+        # indicator: at least two of PTS/REB/AST >= 10 (classic)
+        pts = (df["PTS"] >= 10).astype(int)
+        reb = (df["REB"] >= 10).astype(int)
+        ast = (df["AST"] >= 10).astype(int)
+        s = (pts + reb + ast) >= 2
+        s = s.astype(int)
+    elif stat_code == "TRIPDOUB":
+        pts = (df["PTS"] >= 10).astype(int)
+        reb = (df["REB"] >= 10).astype(int)
+        ast = (df["AST"] >= 10).astype(int)
+        s = (pts + reb + ast) >= 3
+        s = s.astype(int)
+    else:
+        s = df["PTS"].astype(float)
+    return s
+
+def leg_probability(df: pd.DataFrame, stat_code: str, direction: str, thr: float) -> tuple[float,int,int]:
+    """
+    Returns (probability, hits, total) for O/U at threshold.
+    For DOUBDOUB/TRIPDOUB, ignores 'thr' and uses the indicator series (>=1).
+    """
+    ser = compute_stat_series(df, stat_code)
+
+    if stat_code in ["DOUBDOUB", "TRIPDOUB"]:
+        # treat threshold as 1.0 indicator; direction Over means >=1; Under means 0
+        if direction == "Under":
+            hits = int((ser <= 0.5).sum())
+        else:
+            hits = int((ser >= 0.5).sum())
+    else:
+        if direction == "Under":
+            hits = int((ser <= thr).sum())
+        else:
+            hits = int((ser >= thr).sum())
+
+    total = int(ser.notna().sum())
+    p = hits/total if total else 0.0
+    return p, hits, total
 
 # =========================
 # SIDEBAR FILTERS
@@ -204,67 +385,203 @@ with st.sidebar:
     min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1)
 
 # =========================
-# STATE & ADD/REMOVE
+# STATE
 # =========================
 if "legs" not in st.session_state:
-    st.session_state.legs = [{"player":"","stat":"PTS","dir":"O","thr":10.5,"odds":-110,"loc":"All","range":"FULL"}]
+    st.session_state.legs = []  # list of dict legs
+if "awaiting_input" not in st.session_state:
+    st.session_state.awaiting_input = True
 
-c1, c2 = st.columns(2)
+# =========================
+# TOP CONTROLS
+# =========================
+c1, c2 = st.columns([1,1])
 with c1:
     if st.button("➕ Add Leg"):
-        st.session_state.legs.append({"player":"","stat":"PTS","dir":"O","thr":10.5,"odds":-110,"loc":"All","range":"FULL"})
+        st.session_state.awaiting_input = True
 with c2:
-    if st.button("➖ Remove Leg") and len(st.session_state.legs)>1:
+    if st.button("➖ Remove Last Leg") and st.session_state.legs:
         st.session_state.legs.pop()
 
-# =========================
-# MANUAL INPUT COMPONENT
-# =========================
-def render_manual_inputs(leg, i):
-    left, right = st.columns(2)
-    with left:
-        leg["player"] = st.selectbox("Player", PLAYER_LIST, index=PLAYER_LIST.index(leg["player"]) if leg["player"] in PLAYER_LIST else 0, key=f"p{i}")
-        leg["loc"] = st.selectbox("Home/Away", ["All","Home Only","Away Only"], index=["All","Home Only","Away Only"].index(leg["loc"]), key=f"l{i}")
-        leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"], index=["FULL","L10","L20"].index(leg["range"]), key=f"r{i}")
-    with right:
-        leg["stat"] = st.selectbox("Stat", list(STAT_LABELS.keys()), format_func=lambda k: STAT_LABELS[k], index=list(STAT_LABELS.keys()).index(leg["stat"]), key=f"s{i}")
-        leg["dir"] = st.selectbox("O/U", ["O","U"], index=["O","U"].index(leg["dir"]), key=f"d{i}")
-        leg["thr"] = st.number_input("Threshold", min_value=0.0, max_value=100.0, value=float(leg["thr"]), step=0.5, format="%.1f", key=f"t{i}")
-        entered_odds = st.number_input("Sportsbook Odds", min_value=-10000, max_value=10000, value=int(leg["odds"]), step=5, key=f"o{i}")
-        leg["odds"] = normalize_american_odds(entered_odds)
+st.write("**Input bet**")
 
-# =========================
-# INPUT & DYNAMIC DISPLAY
-# =========================
-show_legs = False
-first_leg_entered = any(leg.get("player") for leg in st.session_state.legs)
-
-query = st.text_input("Input bet", placeholder="e.g. Maxey O 24.5 P Away -120", key="first_query")
-
-if query:
-    st.session_state.legs[0].update(parse_bet_query(query, PLAYER_LIST))
-    show_legs = True
-
-if show_legs or first_leg_entered:
+# 1) Render existing legs (Leg 1 on top), each with remove + edit
+if st.session_state.legs:
     for i, leg in enumerate(st.session_state.legs):
-        thr_disp = str(leg['thr']).rstrip('0').rstrip('.')
-        stat_disp = STAT_LABELS.get(leg['stat'], leg['stat'])
-        loc_disp = leg['loc'].replace(' Only','')
-        header = f"{leg['player']} — {leg['dir']} {thr_disp} {stat_disp} ({loc_disp}, {leg['odds']})" if leg['player'] else f"Leg {i+1}"
+        leg_no = i + 1
+        dir_short = "O" if leg["dir"] == "Over" else "U"
+        header = f"Leg {leg_no}: {leg['player']} — {dir_short} {fmt_half(leg['thr'])} {STAT_LABELS.get(leg['stat'], leg['stat'])} ({leg['loc']}, {leg['odds']})"
+        with st.expander(header, expanded=False):
+            cL, cR = st.columns([2,1])
+            with cL:
+                leg["player"] = st.text_input("Player", value=leg["player"], key=f"player_{i}")
+                leg["stat"]   = st.selectbox("Stat", list(STAT_LABELS.keys()),
+                                             index=list(STAT_LABELS.keys()).index(leg["stat"]), key=f"stat_{i}")
+                leg["dir"]    = st.selectbox("O/U", ["Over","Under"], index=(0 if leg["dir"]=="Over" else 1), key=f"dir_{i}")
+                leg["thr"]    = st.number_input("Threshold", value=float(leg["thr"]), step=0.5, key=f"thr_{i}")
+            with cR:
+                leg["loc"]    = st.selectbox("Home/Away", ["All","Home Only","Away"],
+                                             index=["All","Home Only","Away"].index(leg["loc"]), key=f"loc_{i}")
+                leg["range"]  = st.selectbox("Game Range", ["FULL","L10","L20"],
+                                             index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}")
+                leg["odds"]   = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}")
 
-        with st.expander(header, expanded=True):
-            edit = st.checkbox("Edit manually", key=f"edit{i}")
-            if edit:
-                render_manual_inputs(leg, i)
+            rm_col, _ = st.columns([1,5])
+            with rm_col:
+                if st.button(f"❌ Remove Leg {leg_no}", key=f"remove_{i}"):
+                    st.session_state.legs.pop(i)
+                    st.rerun()
 
+# 2) Show the input field only when “awaiting_input” is True
+if st.session_state.awaiting_input:
+    bet_text = st.text_input("e.g. Maxey O 24.5 P Away -120", key="freeform_input", label_visibility="collapsed")
+    if bet_text.strip():
+        parsed = parse_input_line(bet_text)
+        if parsed and parsed["player"]:
+            st.session_state.legs.append(parsed)  # append so it shows under existing legs
+            st.session_state.awaiting_input = False
+            st.rerun()
+
+# Combined parlay odds only when multiple legs exist
+parlay_odds = 0
 if len(st.session_state.legs) > 1:
-    parlay_odds = st.number_input("Combined Parlay Odds (+300, -150, etc.)", value=0, step=5, key="parlay_odds")
-else:
-    parlay_odds = 0
+    st.markdown("### 🎯 Combined Parlay Odds")
+    parlay_odds = st.number_input("Enter Parlay Odds (+300, -150, etc.)", value=0, step=5, key="parlay_odds")
 
 # =========================
-# COMPUTE BUTTON
+# COMPUTE
 # =========================
-if st.button("Compute"):
+if st.session_state.legs and st.button("Compute"):
     st.markdown("---")
-    st.write("✅ Computation logic runs here as in your existing script.")
+
+    rows = []
+    probs_for_parlay = []
+
+    # dark plot theme
+    plt.rcParams.update({
+        "axes.facecolor": "#1e1f22",
+        "figure.facecolor": "#1e1f22",
+        "text.color": "#ffffff",
+        "axes.labelcolor": "#e5e7eb",
+        "xtick.color": "#e5e7eb",
+        "ytick.color": "#e5e7eb",
+        "grid.color": "#374151",
+    })
+
+    for leg in st.session_state.legs:
+        name = leg["player"]
+        pid = get_player_id(name)
+        stat = leg["stat"]
+        direction = leg["dir"]
+        thr = float(leg["thr"])
+        loc = leg["loc"]
+        rng = leg.get("range","FULL")
+        odds = int(leg["odds"])
+
+        if not pid:
+            rows.append({"ok": False, "name": name or "Unknown"})
+            continue
+
+        df = fetch_gamelog(pid, seasons)
+        if df.empty:
+            rows.append({"ok": False, "name": name, "reason": "No logs"})
+            continue
+
+        # filters
+        d = df.copy()
+        d = d[d["MIN_NUM"] >= min_minutes]
+        if loc == "Home Only":
+            d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+        elif loc == "Away":
+            d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
+        d = d.sort_values("GAME_DATE_DT", ascending=False)
+        if rng == "L10":
+            d = d.head(10)
+        elif rng == "L20":
+            d = d.head(20)
+
+        p, hits, total = (0.0, 0, 0)
+        if not d.empty:
+            p, hits, total = leg_probability(d, stat, direction, thr)
+
+        fair = prob_to_american(p)
+        book_prob = american_to_implied(odds)
+        ev = None if book_prob is None else (p - book_prob) * 100.0
+        if p > 0:
+            probs_for_parlay.append(p)
+
+        rows.append({
+            "ok": True, "name": name, "stat": stat, "thr": thr, "dir": direction,
+            "loc": loc, "range": rng, "odds": odds,
+            "p": p, "hits": hits, "total": total, "fair": fair, "book_prob": book_prob, "ev": ev,
+            "df": d
+        })
+
+    # ---------- Combined Parlay ----------
+    combined_p = float(np.prod(probs_for_parlay)) if probs_for_parlay else 0.0
+    combined_fair = prob_to_american(combined_p) if combined_p > 0 else "N/A"
+    entered_prob = american_to_implied(parlay_odds)
+    parlay_ev = None if entered_prob is None else (combined_p - entered_prob) * 100.0
+    cls = "neutral"
+    if parlay_ev is not None:
+        cls = "pos" if parlay_ev >= 0 else "neg"
+
+    st.markdown(f"""
+<div class="card {cls}">
+  <h2>💥 Combined Parlay</h2>
+  <div class="cond">Includes all legs with your filters</div>
+  <div class="row">
+    <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_p*100:.2f}%</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
+    <div class="m"><div class="lab">Entered Odds</div><div class="val">{parlay_odds if parlay_odds else '—'}</div></div>
+    <div class="m"><div class="lab">Book Implied</div><div class="val">{'—' if entered_prob is None else f'{entered_prob*100:.2f}%'}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{'—' if parlay_ev is None else f'{parlay_ev:.2f}%'}</div></div>
+  </div>
+  <div class="chip">{'🔥 +EV Parlay Detected' if (parlay_ev is not None and parlay_ev>=0) else ('⚠️ Negative EV Parlay' if parlay_ev is not None else 'ℹ️ Enter parlay odds')}</div>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ---------- Individual legs ----------
+    for r in rows:
+        if not r.get("ok"):
+            st.warning(f"Could not compute for **{r.get('name','Unknown')}**")
+            continue
+
+        cls = "neutral"
+        if r["ev"] is not None:
+            cls = "pos" if r["ev"] >= 0 else "neg"
+
+        stat_label = STAT_LABELS.get(r["stat"], r["stat"])
+        book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
+        ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
+        dir_word = "O" if r["dir"] == "Over" else "U"
+        cond_text = f"{dir_word} {fmt_half(r['thr'])} {stat_label} — {r['range']} — {r['loc'].replace(' Only','')}"
+
+        st.markdown(f"""
+<div class="card {cls}">
+  <h2>{r['name']}</h2>
+  <div class="cond">Condition: {cond_text}</div>
+  <div class="row">
+    <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{r['fair']}</div></div>
+    <div class="m"><div class="lab">Sportsbook Odds</div><div class="val">{r['odds']}</div></div>
+    <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
+  </div>
+  <div class="chip">{'🔥 +EV Play Detected' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
+</div>
+""", unsafe_allow_html=True)
+
+        # histogram where applicable
+        dff = r["df"]
+        if not dff.empty and r["stat"] not in ["DOUBDOUB","TRIPDOUB"]:
+            ser = compute_stat_series(dff, r["stat"])
+            fig, ax = plt.subplots()
+            ax.hist(ser, bins=20, edgecolor="white",
+                    color=("#00c896" if (r["ev"] is not None and r["ev"]>=0) else "#e05a5a"))
+            ax.axvline(r["thr"], color="w", linestyle="--", label=f"Threshold {fmt_half(r['thr'])}")
+            ax.set_title(f"{r['name']} — {stat_label}")
+            ax.set_xlabel(stat_label); ax.set_ylabel("Games"); ax.legend()
+            st.pyplot(fig)
