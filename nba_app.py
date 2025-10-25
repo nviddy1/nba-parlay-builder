@@ -434,7 +434,12 @@ if st.session_state.legs:
 
 # 2) Show the input field only when “awaiting_input” is True
 if st.session_state.awaiting_input:
-    bet_text = st.text_input("e.g. Maxey O 24.5 P Away -120", key="freeform_input", label_visibility="collapsed")
+    bet_text = st.text_input(
+    "Input bet",
+    placeholder="Maxey O 24.5 P Away -110  OR  Embiid PRA U 35.5 -130",
+    key="freeform_input",
+    label_visibility="collapsed"
+)
     if bet_text.strip():
         parsed = parse_input_line(bet_text)
         if parsed and parsed["player"]:
