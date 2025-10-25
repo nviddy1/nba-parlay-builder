@@ -412,22 +412,23 @@ if st.session_state.legs:
         dir_short = "O" if leg["dir"] == "Over" else "U"
         header = f"Leg {leg_no}: {leg['player']} — {dir_short} {fmt_half(leg['thr'])} {STAT_LABELS.get(leg['stat'], leg['stat'])} ({leg['loc']}, {leg['odds']})"
         def refresh_tagline():
-    st.rerun()
+            st.rerun()
 
-with st.expander(header, expanded=False):
-    cL, cR = st.columns([2,1])
-    with cL:
-        leg["player"] = st.text_input("Player", value=leg["player"], key=f"player_{i}", on_change=refresh_tagline)
-        leg["stat"]   = st.selectbox("Stat", list(STAT_LABELS.keys()),
-                                     index=list(STAT_LABELS.keys()).index(leg["stat"]), key=f"stat_{i}", on_change=refresh_tagline)
-        leg["dir"]    = st.selectbox("O/U", ["Over","Under"], index=(0 if leg["dir"]=="Over" else 1), key=f"dir_{i}", on_change=refresh_tagline)
-        leg["thr"]    = st.number_input("Threshold", value=float(leg["thr"]), step=0.5, key=f"thr_{i}", on_change=refresh_tagline)
-    with cR:
-        leg["loc"]    = st.selectbox("Home/Away", ["All","Home Only","Away"],
-                                     index=["All","Home Only","Away"].index(leg["loc"]), key=f"loc_{i}", on_change=refresh_tagline)
-        leg["range"]  = st.selectbox("Game Range", ["FULL","L10","L20"],
-                                     index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}", on_change=refresh_tagline)
-        leg["odds"]   = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}", on_change=refresh_tagline)
+        with st.expander(header, expanded=False):
+            cL, cR = st.columns([2,1])
+        with cL:
+            leg["player"] = st.text_input("Player", value=leg["player"], key=f"player_{i}", on_change=refresh_tagline)
+            leg["stat"]   = st.selectbox("Stat", list(STAT_LABELS.keys()),
+                                         index=list(STAT_LABELS.keys()).index(leg["stat"]), key=f"stat_{i}", on_change=refresh_tagline)
+            leg["dir"]    = st.selectbox("O/U", ["Over","Under"], index=(0 if leg["dir"]=="Over" else 1), key=f"dir_{i}", on_change=refresh_tagline)
+            leg["thr"]    = st.number_input("Threshold", value=float(leg["thr"]), step=0.5, key=f"thr_{i}", on_change=refresh_tagline)
+        with cR:
+            leg["loc"]    = st.selectbox("Home/Away", ["All","Home Only","Away"],
+                                         index=["All","Home Only","Away"].index(leg["loc"]), key=f"loc_{i}", on_change=refresh_tagline)
+            leg["range"]  = st.selectbox("Game Range", ["FULL","L10","L20"],
+                                         index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}", on_change=refresh_tagline)
+            leg["odds"]   = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}", on_change=refresh_tagline)
+
 
             rm_col, _ = st.columns([1,5])
             with rm_col:
