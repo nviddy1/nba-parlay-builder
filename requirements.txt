@@ -5,3 +5,4 @@ seaborn
 requests
 nba_api
 plotly
+rapidfuzz
