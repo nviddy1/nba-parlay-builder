@@ -653,7 +653,7 @@ with tab_breakeven:
     with cA:
         player_query = st.text_input("Player", placeholder="e.g., Stephen Curry")
     with cB:
-        last_n = st.slider("Last N Games", min_value=5, max_value=50, value=20, step=1)
+        last_n = st.slider("Last N Games", min_value=5, max_value=100, value=20, step=1)
     with cC:
         min_min_b = st.slider("Min Minutes", min_value=0, max_value=40, value=20, step=1)
     with cD:
@@ -729,4 +729,4 @@ with tab_breakeven:
                                 })
 
                             breakeven_df = pd.DataFrame(rows, columns=["Stat","Breakeven Line","Over Implied (Fair)","Under Implied (Fair)"])
-                            st.table(breakeven_df)
+                            st.table(breakeven_df.set_index("Stat"))
