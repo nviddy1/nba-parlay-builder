@@ -83,24 +83,93 @@ input, select, textarea {
 """, unsafe_allow_html=True)
 
 # =========================
-# HELPERS (abbreviated)
+# CONSTANTS & HELPERS
 # =========================
+STAT_LABELS = {
+  "PTS": "Points", "REB": "Rebounds", "AST": "Assists", "STL": "Steals", "BLK": "Blocks",
+  "FG3M": "3PM", "DOUBDOUB": "Double-Double", "TRIPDOUB": "Triple-Double",
+  "P+R": "P+R", "P+A": "P+A", "R+A": "R+A", "PRA": "PRA"
+}
+
+STAT_TOKENS = {
+  "P": "PTS", "R": "REB", "A": "AST", "PTS": "PTS", "REB": "REB", "AST": "AST",
+  "STL": "STL", "BLK": "BLK", "3PM": "FG3M", "FG3M": "FG3M",
+  "P+R": "P+R", "R+A": "R+A", "P+A": "P+A", "PRA": "PRA",
+  "DD": "DOUBDOUB", "TD": "TRIPDOUB"
+}
+
+@st.cache_data
+def get_all_player_names():
+    active = players.get_active_players()
+    names = [p["full_name"] for p in active if p.get("full_name")]
+    return sorted(set(names))
+
+PLAYER_LIST = get_all_player_names()
+
+def best_player_match(query: str) -> str:
+    q = (query or "").strip()
+    if not q:
+        return ""
+    m = process.extractOne(q, PLAYER_LIST, score_cutoff=70)
+    return m[0] if m else ""
+
 def american_to_implied(odds):
-    try:
-        x = float(odds)
-    except Exception:
-        return None
-    if -99 < x < 100:
-        return None
-    if x > 0:
-        return 100.0/(x+100.0)
-    return abs(x)/(abs(x)+100.0)
+    try: x = float(odds)
+    except Exception: return None
+    if -99 < x < 100: return None
+    if x > 0: return 100.0 / (x + 100.0)
+    return abs(x) / (abs(x) + 100.0)
 
 def prob_to_american(p):
-    if p <= 0 or p >= 1:
-        return "N/A"
-    dec = 1.0/p
-    return f"+{int(round((dec-1)*100))}" if dec >= 2.0 else f"-{int(round(100/(dec-1)))}"
+    if p <= 0 or p >= 1: return "N/A"
+    dec = 1.0 / p
+    return f"+{int(round((dec - 1) * 100))}" if dec >= 2.0 else f"-{int(round(100 / (dec - 1)))}"
+
+def fmt_half(x):
+    try: v = float(x); return f"{v:.1f}".rstrip("0").rstrip(".")
+    except Exception: return str(x)
+
+# =========================
+# GAME LOG / COMPUTATION
+# =========================
+def get_player_id(full_name: str):
+    if not full_name:
+        return None
+    res = players.find_players_by_full_name(full_name)
+    return res[0]["id"] if res else None
+
+def to_minutes(val):
+    try:
+        s = str(val)
+        if ":" in s: return int(s.split(":")[0])
+        return int(float(s))
+    except Exception:
+        return 0
+
+def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
+    dfs = []
+    for s in seasons:
+        try:
+            g = playergamelog.PlayerGameLog(player_id=player_id, season=s).get_data_frames()[0]
+            dfs.append(g)
+        except Exception:
+            pass
+    if not dfs:
+        return pd.DataFrame()
+    df = pd.concat(dfs, ignore_index=True)
+    for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
+    df["MIN_NUM"] = df["MIN"].apply(to_minutes)
+    df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
+    return df
+
+def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
+    if stat_code == "P+R": return df["PTS"] + df["REB"]
+    if stat_code == "P+A": return df["PTS"] + df["AST"]
+    if stat_code == "R+A": return df["REB"] + df["AST"]
+    if stat_code == "PRA": return df["PTS"] + df["REB"] + df["AST"]
+    return df[stat_code] if stat_code in df.columns else pd.Series(dtype=float)
 
 # =========================
 # TABS
@@ -115,22 +184,35 @@ with tab_builder:
         st.session_state.legs = []
 
     st.markdown("### ⚙️ Filters")
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        seasons = st.multiselect("Seasons", ["2024-25","2023-24","2022-23"], default=["2024-25"])
-    with c2:
-        min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1)
+    filter_cols = st.columns([1, 1, 3])
+    with filter_cols[0]:
+        seasons = st.multiselect(
+            "Season(s)",
+            ["2024-25", "2023-24", "2022-23"],
+            default=["2024-25"],
+            key="builder_seasons"
+        )
+    with filter_cols[1]:
+        min_minutes = st.slider(
+            "Min Minutes",
+            min_value=0,
+            max_value=40,
+            value=20,
+            step=1,
+            key="builder_min_minutes"
+        )
 
     st.markdown("### 🏀 Input Bet")
-    st.write("Add your props below in natural text form:")
-
     bet_text = st.text_input(
         "Input bet",
         placeholder="Maxey O 24.5 P Away -110 OR Embiid PRA U 35.5 -130",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="builder_input_bet"
     )
 
-    # (You can keep your existing logic for parsing and displaying legs here)
+    # Placeholder for your parsing and computation logic
+    if bet_text:
+        st.success(f"✅ Parsed input: {bet_text}")
 
 # =========================
 # TAB 2: BREAKEVEN
@@ -138,18 +220,59 @@ with tab_builder:
 with tab_breakeven:
     st.subheader("🔎 Breakeven Finder")
 
-    cA, cB, cC, cD, cE = st.columns([2,1,1,1,1])
+    cA, cB, cC, cD, cE = st.columns([2, 1, 1, 1, 1])
     with cA:
-        player_query = st.text_input("Player", placeholder="e.g., Stephen Curry")
+        player_query = st.text_input(
+            "Player",
+            placeholder="e.g., Stephen Curry",
+            key="breakeven_player"
+        )
     with cB:
-        last_n = st.slider("Last N Games", 5, 100, 20, 1)
+        last_n = st.slider(
+            "Last N Games",
+            min_value=5,
+            max_value=100,
+            value=20,
+            step=1,
+            key="breakeven_lastn"
+        )
     with cC:
-        min_min_b = st.slider("Min Minutes", 0, 40, 20, 1)
+        min_min_b = st.slider(
+            "Min Minutes",
+            min_value=0,
+            max_value=40,
+            value=20,
+            step=1,
+            key="breakeven_min_minutes"
+        )
     with cD:
-        loc_choice = st.selectbox("Location", ["All","Home Only","Away"], index=0)
+        loc_choice = st.selectbox(
+            "Location",
+            ["All", "Home Only", "Away"],
+            index=0,
+            key="breakeven_location"
+        )
     with cE:
-        seasons_b = st.multiselect("Seasons", ["2024-25","2023-24","2022-23"], default=["2024-25"])
+        seasons_b = st.multiselect(
+            "Season(s)",
+            ["2024-25", "2023-24", "2022-23"],
+            default=["2024-25"],
+            key="breakeven_seasons"
+        )
 
-    do_search = st.button("Search")
+    do_search = st.button("Search", key="breakeven_search")
 
-    # (Keep rest of Breakeven logic the same — this only changes layout)
+    if do_search:
+        player_name = best_player_match(player_query)
+        if not player_name:
+            st.warning("Could not match that player. Try a more specific name.")
+        else:
+            pid = get_player_id(player_name)
+            if not pid:
+                st.warning("No player ID found for that name.")
+            else:
+                df = fetch_gamelog(pid, seasons_b)
+                if df.empty:
+                    st.warning("No game logs found.")
+                else:
+                    st.success(f"Found {len(df)} games for {player_name}")
