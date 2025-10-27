@@ -432,13 +432,14 @@ def breakeven_for_stat(series: pd.Series) -> dict:
 tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
 
 # =========================
-# TAB 1: PARLAY BUILDER  (your existing page)
+# TAB 1: PARLAY BUILDER
 # =========================
 with tab_builder:
-    # ----- SIDEBAR FILTERS -----
-    with st.sidebar:
-        st.subheader("⚙️ Filters")
+    # ---- Inline Filters (moved from sidebar) ----
+    fc1, fc2 = st.columns([1.2, 1])
+    with fc1:
         seasons = st.multiselect("Seasons", ["2024-25","2023-24","2022-23"], default=["2024-25"])
+    with fc2:
         min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1)
 
     # ----- STATE -----
@@ -648,6 +649,13 @@ with tab_builder:
 with tab_breakeven:
     st.subheader("🔎 Breakeven Finder")
 
+    # Seasons selector added here; Min Minutes already exists below
+    f1, f2 = st.columns([1.2, 1])
+    with f1:
+        seasons_b = st.multiselect("Seasons", ["2024-25","2023-24","2022-23"], default=["2024-25"])
+    with f2:
+        pass  # spacer to keep layout tidy
+
     # Inputs
     cA, cB, cC, cD = st.columns([2,1,1,1])
     with cA:
@@ -670,8 +678,6 @@ with tab_breakeven:
             if not pid:
                 st.warning("No player ID found for that name.")
             else:
-                # seasons: use same default list as Builder; expose in sidebar would be overkill here
-                seasons_b = ["2024-25","2023-24","2022-23"]
                 df = fetch_gamelog(pid, seasons_b)
 
                 if df.empty:
@@ -696,7 +702,7 @@ with tab_breakeven:
                             img = headshot_url(pid)
                             if img:
                                 st.image(img, width=180)
-                            st.caption(f"Filters: Last {last_n} • Min {min_min_b}m • {loc_choice}")
+                            st.caption(f"Filters: Seasons {', '.join(seasons_b)} • Last {last_n} • Min {min_min_b}m • {loc_choice}")
 
                         with right:
                             # Which stats to show (exclude the two indicator stats)
