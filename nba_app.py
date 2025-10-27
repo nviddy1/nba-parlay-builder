@@ -59,8 +59,8 @@ input, select, textarea {
   color: var(--text) !important;
   border: 1px solid #3b3f45 !important;
   border-radius: 8px !important;
-  font-size: 0.85rem !important;
-  padding: 4px 6px !important;
+  font-size: 0.9rem !important;
+  padding: 6px !important;
 }
 
 /* Cards */
@@ -98,9 +98,15 @@ input, select, textarea {
 }
 
 /* Simple table polish for Breakeven tab */
-table { border-collapse: collapse; }
-thead th { border-bottom: 1px solid #374151 !important; }
-tbody td, thead th { padding: 8px 10px !important; }
+table {
+  border-collapse: collapse;
+}
+thead th {
+  border-bottom: 1px solid #374151 !important;
+}
+tbody td, thead th {
+  padding: 8px 10px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -409,7 +415,7 @@ def breakeven_for_stat(series: pd.Series) -> dict:
     for t in candidates:
         over = (s >= t).mean()
         gap = abs(over - 0.5)
-        # tie-breaker simple: smallest gap wins
+        # tie-breaker: prefer thresholds aligning to .5 then .0, then closest to median value
         if (gap < best_gap) or (best_t is None):
             best_t, best_gap, best_over = t, gap, over
 
@@ -426,16 +432,14 @@ def breakeven_for_stat(series: pd.Series) -> dict:
 tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
 
 # =========================
-# TAB 1: PARLAY BUILDER
+# TAB 1: PARLAY BUILDER  (your existing page)
 # =========================
 with tab_builder:
-    # ----- INLINE COMPACT FILTERS (replacing the sidebar) -----
-    st.markdown("### ⚙️ Filters")
-    colA, colB = st.columns([1,1])
-    with colA:
+    # ----- SIDEBAR FILTERS -----
+    with st.sidebar:
+        st.subheader("⚙️ Filters")
         seasons = st.multiselect("Seasons", ["2024-25","2023-24","2022-23"], default=["2024-25"])
-    with colB:
-        min_minutes = st.slider("Min Minutes", 0, 40, 20, 1)
+        min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1)
 
     # ----- STATE -----
     if "legs" not in st.session_state:
@@ -644,7 +648,7 @@ with tab_builder:
 with tab_breakeven:
     st.subheader("🔎 Breakeven Finder")
 
-    # Inputs (compact, aligned)
+    # Inputs
     cA, cB, cC, cD = st.columns([2,1,1,1])
     with cA:
         player_query = st.text_input("Player", placeholder="e.g., Stephen Curry")
@@ -666,7 +670,7 @@ with tab_breakeven:
             if not pid:
                 st.warning("No player ID found for that name.")
             else:
-                # seasons used in breakeven
+                # seasons: use same default list as Builder; expose in sidebar would be overkill here
                 seasons_b = ["2024-25","2023-24","2022-23"]
                 df = fetch_gamelog(pid, seasons_b)
 
