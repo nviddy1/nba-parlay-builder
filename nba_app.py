@@ -143,6 +143,23 @@ STAT_TOKENS = {
     "PRA": "PRA"
 }
 
+NBA_CUP_DATES = pd.to_datetime([
+    # 2023-24 NBA Cup
+    "2023-11-03","2023-11-10","2023-11-14","2023-11-17",
+    "2023-11-21","2023-11-24","2023-11-28",
+    "2023-12-04","2023-12-05","2023-12-07","2023-12-09",
+
+    # 2024-25 NBA Cup
+    "2024-11-12","2024-11-15","2024-11-19","2024-11-22",
+    "2024-11-26","2024-11-29","2024-12-03",
+    "2024-12-10","2024-12-11","2024-12-14","2024-12-17",
+
+    # 2025-26 NBA Cup
+    "2025-10-31","2025-11-07","2025-11-14","2025-11-21",
+    "2025-11-25","2025-11-26","2025-11-28",
+    "2025-12-09","2025-12-10","2025-12-13","2025-12-16",
+])
+
 @st.cache_data
 def get_all_player_names():
     try:
@@ -276,26 +293,50 @@ def to_minutes(val):
     except Exception:
         return 0
 
-def fetch_gamelog(player_id: int, seasons: list[str]) -> pd.DataFrame:
+def fetch_gamelog(player_id: int, seasons: list[str], include_playoffs: bool=False, only_playoffs: bool=False) -> pd.DataFrame:
     dfs = []
     for s in seasons:
-        try:
-            g = playergamelog.PlayerGameLog(player_id=player_id, season=s).get_data_frames()[0]
-            dfs.append(g)
-        except Exception:
-            pass
+        # Regular season logs (skip if only playoffs)
+        if not only_playoffs:
+            try:
+                reg = playergamelog.PlayerGameLog(
+                    player_id=player_id,
+                    season=s,
+                    season_type_all_star="Regular Season"
+                ).get_data_frames()[0]
+                dfs.append(reg)
+            except Exception:
+                pass
+
+        # Playoff logs if selected or if only playoffs
+        if include_playoffs or only_playoffs:
+            try:
+                po = playergamelog.PlayerGameLog(
+                    player_id=player_id,
+                    season=s,
+                    season_type_all_star="Playoffs"
+                ).get_data_frames()[0]
+                dfs.append(po)
+            except Exception:
+                pass
+
     if not dfs:
         return pd.DataFrame()
+
     df = pd.concat(dfs, ignore_index=True)
+
     for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
+
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     if "GAME_DATE" in df.columns:
         df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
     else:
         df["GAME_DATE_DT"] = pd.Timestamp.now()
+
     return df
+
 
 def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
     s = pd.Series(dtype=float, index=df.index)
@@ -421,6 +462,11 @@ with tab_builder:
             default=["2025-26","2024-25"],
             key="seasons_builder"
         )
+        include_playoffs = st.checkbox("Include Playoffs", value=False, key="pb_playoffs")
+        only_playoffs = st.checkbox("Only Playoffs", value=False, key="pb_only_playoffs")
+        nba_cup_only = st.checkbox("NBA Cup Games Only", key="cup_only_builder")
+
+
     with fc2:
         min_minutes = st.slider("Min Minutes", 0, 40, 20, 1, key="min_minutes_builder")
     with fc3:
@@ -527,7 +573,7 @@ with tab_builder:
 
             df = pd.DataFrame()
             if pid:
-                df = fetch_gamelog(pid, seasons)
+                df = fetch_gamelog(pid, seasons, include_playoffs, only_playoffs)
 
             if df.empty:
                 st.warning(f"Could not compute for **{name}**")
@@ -539,6 +585,9 @@ with tab_builder:
                 d = d[d["MATCHUP"].astype(str).str.contains("vs")]
             elif loc == "Away":
                 d = d[d["MATCHUP"].astype(str).str.contains("@")]
+
+            if nba_cup_only:
+                d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
 
             d = d.sort_values("GAME_DATE_DT", ascending=False)
             if rng == "L10": d = d.head(10)
@@ -696,6 +745,10 @@ with tab_breakeven:
             default=["2025-26","2024-25"],
             key="seasons_breakeven"
         )
+        include_playoffs_b = st.checkbox("Include Playoffs", value=False, key="be_playoffs")
+        only_playoffs_b = st.checkbox("Only Playoffs", value=False, key="be_only_playoffs")
+        nba_cup_only_b = st.checkbox("NBA Cup Games Only", key="cup_only_break")
+
 
     cA, cB, cC, cD = st.columns([2,1,1,1])
     with cA:
@@ -715,7 +768,7 @@ with tab_breakeven:
             st.warning("Could not match player.")
         else:
             pid = get_player_id(player_name)
-            df = fetch_gamelog(pid, seasons_b)
+            df = fetch_gamelog(pid, seasons_b, include_playoffs_b, only_playoffs_b)
 
             d = df.copy()
             d = d[d["MIN_NUM"] >= min_min_b]
@@ -724,6 +777,10 @@ with tab_breakeven:
                 d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
             elif loc_choice == "Away":
                 d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
+
+            if nba_cup_only_b:
+                d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
+
 
             d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n)
 
