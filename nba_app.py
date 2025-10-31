@@ -338,6 +338,15 @@ def headshot_url(pid: int | None) -> str | None:
         return None
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{pid}.png"
 
+def get_team_logo(player_id: int | None):
+    if not player_id:
+        return None
+    try:
+        # NBA CDN format for team logo
+        return f"https://cdn.nba.com/logos/nba/{player_id}/global/L/logo.svg"
+    except:
+        return None
+
 def breakeven_for_stat(series: pd.Series) -> dict:
     s = pd.to_numeric(series, errors="coerce").dropna()
     total = len(s)
@@ -357,6 +366,43 @@ def breakeven_for_stat(series: pd.Series) -> dict:
     return {"line": float(best_t), "over_prob": over_prob, "under_prob": under_prob,
             "over_odds": prob_to_american(over_prob), "under_odds": prob_to_american(under_prob)}
 
+def get_team_logo_from_df(df):
+    try:
+        team_id = df["TEAM_ID"].iloc[0]
+        return f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
+    except:
+        return None
+
+def sparkline(values, thr):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from io import BytesIO
+    import base64
+
+    # clean series
+    vals = pd.to_numeric(values, errors="coerce").dropna()
+    if vals.empty:
+        return ""
+
+    # create sparkline
+    fig, ax = plt.subplots(figsize=(4,0.35))  # tiny chart
+    fig.patch.set_alpha(0.0)
+    ax.set_axis_off()
+
+    # line
+    ax.plot(vals.index, vals.values, linewidth=1, alpha=0.8)
+
+    # threshold line
+    ax.axhline(thr, color="white", linestyle="--", linewidth=1)
+
+    # convert to inline base64
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f'<img src="data:image/png;base64,{img_b64}" style="width:100%;height:22px;opacity:0.9;" />'
+
+
 # =========================
 # TABS
 # =========================
@@ -366,25 +412,27 @@ tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
 # TAB 1: PARLAY BUILDER
 # =========================
 with tab_builder:
-    # Inline Filters (moved from sidebar) — unique keys to avoid duplicate element IDs
-    fc1, fc2 = st.columns([1.2, 1])
+    # Filters Row
+    fc1, fc2, fc3 = st.columns([1.2, 1, 1])
     with fc1:
         seasons = st.multiselect(
             "Seasons",
-            ["2024-25","2023-24","2022-23"],
-            default=["2024-25"],
-            key="seasons_builder"   # <-- unique
+            ["2025-26","2024-25","2023-24","2022-23"],
+            default=["2025-26","2024-25"],
+            key="seasons_builder"
         )
     with fc2:
-        min_minutes = st.slider("Minimum Minutes", 0, 40, 20, 1, key="min_minutes_builder")
+        min_minutes = st.slider("Min Minutes", 0, 40, 20, 1, key="min_minutes_builder")
+    with fc3:
+        last_n_games = st.slider("Last N Games", 5, 100, 20, 1, key="parlay_lastn")
 
-    # ----- STATE -----
+    # State
     if "legs" not in st.session_state:
         st.session_state.legs = []
     if "awaiting_input" not in st.session_state:
         st.session_state.awaiting_input = True
 
-    # ----- TOP CONTROLS -----
+    # Buttons row
     c1, c2 = st.columns([1,1])
     with c1:
         if st.button("➕ Add Leg"):
@@ -395,7 +443,7 @@ with tab_builder:
 
     st.write("**Input bet**")
 
-    # Existing legs
+    # Existing legs edit UI
     if st.session_state.legs:
         for i, leg in enumerate(st.session_state.legs):
             leg_no = i + 1
@@ -423,11 +471,11 @@ with tab_builder:
                         st.session_state.legs.pop(i)
                         st.rerun()
 
-    # Input field when awaiting_input
+    # Freeform input box
     if st.session_state.awaiting_input:
         bet_text = st.text_input(
             "Input bet",
-            placeholder="Maxey O 24.5 P Away -110  OR  Embiid PRA U 35.5 -130",
+            placeholder="Maxey O 24.5 P Away -110",
             key="freeform_input",
             label_visibility="collapsed"
         )
@@ -438,15 +486,15 @@ with tab_builder:
                 st.session_state.awaiting_input = False
                 st.rerun()
 
-    # Combined parlay odds
+    # Enter parlay odds
     parlay_odds = 0
     if len(st.session_state.legs) > 1:
-        st.markdown("### 🎯 Combined Parlay Odds")
-        parlay_odds = st.number_input("Enter Parlay Odds (+300, -150, etc.)", value=0, step=5, key="parlay_odds")
+        st.subheader("🎯 Combined Parlay Odds")
+        parlay_odds = st.number_input("Parlay Odds (+300, -150)", value=0, step=5, key="parlay_odds")
 
-    # Compute
+    # Compute action
     if st.session_state.legs and st.button("Compute"):
-        st.markdown("---")
+        st.write("---")
         rows = []
         probs_for_parlay = []
 
@@ -460,6 +508,13 @@ with tab_builder:
             "grid.color": "#374151",
         })
 
+        def get_team_logo_from_df(df):
+            try:
+                return f"https://cdn.nba.com/logos/nba/{int(df['TEAM_ID'].iloc[0])}/global/L/logo.svg"
+            except:
+                return None
+
+        # Loop legs
         for leg in st.session_state.legs:
             name = leg["player"]
             pid = get_player_id(name)
@@ -470,31 +525,27 @@ with tab_builder:
             rng = leg.get("range","FULL")
             odds = int(leg["odds"])
 
-            if not pid:
-                rows.append({"ok": False, "name": name or "Unknown"})
-                continue
+            df = pd.DataFrame()
+            if pid:
+                df = fetch_gamelog(pid, seasons)
 
-            df = fetch_gamelog(pid, seasons)
             if df.empty:
-                rows.append({"ok": False, "name": name, "reason": "No logs"})
+                st.warning(f"Could not compute for **{name}**")
                 continue
 
             d = df.copy()
             d = d[d["MIN_NUM"] >= min_minutes]
             if loc == "Home Only":
-                d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+                d = d[d["MATCHUP"].astype(str).str.contains("vs")]
             elif loc == "Away":
-                d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
+                d = d[d["MATCHUP"].astype(str).str.contains("@")]
+
             d = d.sort_values("GAME_DATE_DT", ascending=False)
-            if rng == "L10":
-                d = d.head(10)
-            elif rng == "L20":
-                d = d.head(20)
+            if rng == "L10": d = d.head(10)
+            elif rng == "L20": d = d.head(20)
+            else: d = d.head(last_n_games)
 
-            p, hits, total = (0.0, 0, 0)
-            if not d.empty:
-                p, hits, total = leg_probability(d, stat, direction, thr)
-
+            p, hits, total = leg_probability(d, stat, direction, thr)
             fair = prob_to_american(p)
             book_prob = american_to_implied(odds)
             ev = None if book_prob is None else (p - book_prob) * 100.0
@@ -502,77 +553,133 @@ with tab_builder:
                 probs_for_parlay.append(p)
 
             rows.append({
-                "ok": True, "name": name, "stat": stat, "thr": thr, "dir": direction,
+                "name": name, "stat": stat, "thr": thr, "dir": direction,
                 "loc": loc, "range": rng, "odds": odds,
-                "p": p, "hits": hits, "total": total, "fair": fair, "book_prob": book_prob, "ev": ev,
-                "df": d
+                "p": p, "hits": hits, "total": total, "fair": fair,
+                "book_prob": book_prob, "ev": ev, "df": d
             })
 
+        # Combined Parlay Stats
         combined_p = float(np.prod(probs_for_parlay)) if probs_for_parlay else 0.0
         combined_fair = prob_to_american(combined_p) if combined_p > 0 else "N/A"
         entered_prob = american_to_implied(parlay_odds)
+        book_implied_prob = entered_prob * 100 if entered_prob else None
         parlay_ev = None if entered_prob is None else (combined_p - entered_prob) * 100.0
+
         cls = "neutral"
         if parlay_ev is not None:
             cls = "pos" if parlay_ev >= 0 else "neg"
 
+        combined_prob_disp = f"{combined_p*100:.2f}%" if combined_p > 0 else "—"
+        parlay_ev_disp = "—" if parlay_ev is None else f"{parlay_ev:.2f}%"
+        book_implied_str = "—" if book_implied_prob is None else f"{book_implied_prob:.2f}%"
+
+        # ✅ Combined Parlay Card (top)
         st.markdown(f"""
 <div class="card {cls}">
   <h2>💥 Combined Parlay</h2>
-  <div class="cond">Includes all legs with your filters</div>
-  <div class="row">
-    <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_p*100:.2f}%</div></div>
-    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
-    <div class="m"><div class="lab">Entered Odds</div><div class="val">{parlay_odds if parlay_odds else '—'}</div></div>
-    <div class="m"><div class="lab">Book Implied</div><div class="val">{'—' if entered_prob is None else f'{entered_prob*100:.2f}%'}</div></div>
-    <div class="m"><div class="lab">Expected Value</div><div class="val">{'—' if parlay_ev is None else f'{parlay_ev:.2f}%'}</div></div>
+  <div style="font-size:0.95rem;color:#9ca3af;margin-bottom:14px;">
+      Includes all legs with your filters
   </div>
-  <div class="chip">{'🔥 +EV Parlay Detected' if (parlay_ev is not None and parlay_ev>=0) else ('⚠️ Negative EV Parlay' if parlay_ev is not None else 'ℹ️ Enter parlay odds')}</div>
+  <div class="row">
+    <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_prob_disp}</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
+    <div class="m"><div class="lab">Entered Odds</div><div class="val">{parlay_odds}</div></div>
+    <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied_str}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{parlay_ev_disp}</div></div>
+  </div>
+  <div style="margin-top:14px;">
+    <span class="chip">
+      {('🔥 +EV Parlay Detected' if (parlay_ev is not None and parlay_ev >= 0)
+        else '⚠️ Negative EV Parlay')}
+    </span>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
-        st.markdown("---")
-
+        # ✅ Player Cards
         for r in rows:
-            if not r.get("ok"):
-                st.warning(f"Could not compute for **{r.get('name','Unknown')}**")
-                continue
+            pid = get_player_id(r["name"])
+            head = headshot_url(pid)
+            logo = get_team_logo_from_df(r["df"])
 
             cls = "neutral"
             if r["ev"] is not None:
                 cls = "pos" if r["ev"] >= 0 else "neg"
 
+            img_html = f'<img src="{head}" width="72" style="border-radius:12px;">' if head else ""
+            logo_html = f'<img src="{logo}" width="38" style="margin-left:10px;">' if logo else ""
+
             stat_label = STAT_LABELS.get(r["stat"], r["stat"])
-            book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
-            ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
             dir_word = "O" if r["dir"] == "Over" else "U"
             cond_text = f"{dir_word} {fmt_half(r['thr'])} {stat_label} — {r['range']} — {r['loc'].replace(' Only','')}"
 
+            book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
+            ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
+
             st.markdown(f"""
 <div class="card {cls}">
-  <h2>{r['name']}</h2>
-  <div class="cond">Condition: {cond_text}</div>
-  <div class="row">
+  <div style="display:flex;align-items:center;gap:12px;">
+      {img_html}
+      <div style="display:flex;flex-direction:column;">
+          <h2 style="margin:0;font-size:1.25rem;">{r['name']}</h2>
+          <div style="font-size:0.90rem;color:#9ca3af;margin-top:4px;">{cond_text}</div>
+      </div>
+      {logo_html}
+  </div>
+  <div class="row" style="margin-top:18px;">
     <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
     <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{r['fair']}</div></div>
     <div class="m"><div class="lab">Sportsbook Odds</div><div class="val">{r['odds']}</div></div>
     <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
     <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
   </div>
-  <div class="chip">{'🔥 +EV Play Detected' if (r['ev'] is not None and r['ev']>=0) else ('⚠️ Negative EV Play' if r['ev'] is not None else 'ℹ️ Add odds to compute EV')}</div>
+  <div style="margin-top:10px;">
+    <span class="chip">{('🔥 +EV Play Detected' if (r['ev'] is not None and r['ev'] >= 0) else '⚠️ Negative EV Play')}</span>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
-            dff = r["df"]
-            if not dff.empty and r["stat"] not in ["DOUBDOUB","TRIPDOUB"]:
-                ser = compute_stat_series(dff, r["stat"])
-                fig, ax = plt.subplots()
-                ax.hist(ser, bins=20, edgecolor="white",
-                        color=("#00c896" if (r["ev"] is not None and r["ev"]>=0) else "#e05a5a"))
-                ax.axvline(r["thr"], color="w", linestyle="--", label=f"Threshold {fmt_half(r['thr'])}")
-                ax.set_title(f"{r['name']} — {stat_label}")
-                ax.set_xlabel(stat_label); ax.set_ylabel("Games"); ax.legend()
-                st.pyplot(fig)
+            # ✅ Discrete Value Distribution (1 bar per stat result)
+            if r["stat"] not in ["DOUBDOUB","TRIPDOUB"]:
+                ser = compute_stat_series(r["df"], r["stat"]).dropna().astype(int)
+                value_counts = ser.value_counts().sort_index()
+
+                data_min, data_max = int(ser.min()), int(ser.max())
+                all_vals = list(range(data_min, data_max + 1))
+                counts = [value_counts.get(v, 0) for v in all_vals]
+                label_count = max(1, (data_max - data_min) // 5)
+
+                with st.expander("📊 Show Game Distribution", expanded=False):
+                    fig, ax = plt.subplots(figsize=(6.5, 2.4))
+                    fig.patch.set_facecolor("#1e1f22")
+                    ax.set_facecolor("#1e1f22")
+
+                    color = "#00c896" if (r["ev"] is not None and r["ev"] >= 0) else "#e05a5a"
+
+                    ax.bar(all_vals, counts,
+                           color=color, alpha=0.75, edgecolor="#d1d5db",
+                           linewidth=0.5, width=0.9)
+
+                    ax.axvline(r["thr"], color="white", linestyle="--", linewidth=1.4)
+
+                    ax.set_xticks(all_vals)
+                    ax.set_xticklabels(
+                        [str(v) if ((v - data_min) % label_count == 0 or v == r["thr"]) else "" for v in all_vals],
+                        color="#9ca3af", fontsize=8
+                    )
+                    ax.tick_params(axis="y", colors="#9ca3af", labelsize=8)
+
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor("#4b5563")
+
+                    ax.grid(color="#374151", linestyle="--", linewidth=0.5, alpha=0.55)
+                    ax.set_axisbelow(True)
+                    ax.set_ylabel("")
+                    ax.set_xlabel("")
+
+                    st.pyplot(fig, use_container_width=True)
+
 
 # =========================
 # TAB 2: BREAKEVEN
@@ -580,25 +687,23 @@ with tab_builder:
 with tab_breakeven:
     st.subheader("🔎 Breakeven Finder")
 
-    # Seasons selector with its own unique key
+    # Filters
     f1, f2 = st.columns([1.2, 1])
     with f1:
         seasons_b = st.multiselect(
             "Seasons",
-            ["2024-25","2023-24","2022-23"],
-            default=["2024-25"],
-            key="seasons_breakeven"   # <-- unique
+            ["2025-26","2024-25","2023-24","2022-23"],
+            default=["2025-26","2024-25"],
+            key="seasons_breakeven"
         )
-    with f2:
-        pass
 
     cA, cB, cC, cD = st.columns([2,1,1,1])
     with cA:
         player_query = st.text_input("Player", placeholder="e.g., Stephen Curry", key="breakeven_player")
     with cB:
-        last_n = st.slider("Last N Games", min_value=5, max_value=100, value=20, step=1, key="breakeven_lastn")
+        last_n = st.slider("Last N", 5, 100, 20, 1, key="breakeven_lastn")
     with cC:
-        min_min_b = st.slider("Min Minutes", min_value=0, max_value=40, value=20, step=1, key="breakeven_minmin")
+        min_min_b = st.slider("Min Min", 0, 40, 20, 1, key="breakeven_minmin")
     with cD:
         loc_choice = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="breakeven_loc")
 
@@ -607,59 +712,69 @@ with tab_breakeven:
     if do_search:
         player_name = best_player_match(player_query)
         if not player_name:
-            st.warning("Could not match that player. Try a more specific name.")
+            st.warning("Could not match player.")
         else:
             pid = get_player_id(player_name)
-            if not pid:
-                st.warning("No player ID found for that name.")
-            else:
-                df = fetch_gamelog(pid, seasons_b)
+            df = fetch_gamelog(pid, seasons_b)
 
-                if df.empty:
-                    st.warning("No game logs found.")
-                else:
-                    d = df.copy()
-                    d = d[d["MIN_NUM"] >= min_min_b]
-                    if loc_choice == "Home Only":
-                        d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
-                    elif loc_choice == "Away":
-                        d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-                    d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n)
+            d = df.copy()
+            d = d[d["MIN_NUM"] >= min_min_b]
 
-                    if d.empty:
-                        st.warning("No games match your filters.")
-                    else:
-                        left, right = st.columns([1,2], vertical_alignment="top")
-                        with left:
-                            st.markdown(f"### **{player_name}**")
-                            img = headshot_url(pid)
-                            if img:
-                                st.image(img, width=180)
-                            st.caption(f"Filters: Seasons {', '.join(seasons_b)} • Last {last_n} • Min {min_min_b}m • {loc_choice}")
+            if loc_choice == "Home Only":
+                d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+            elif loc_choice == "Away":
+                d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
 
-                        with right:
-                            stat_list = ["PTS","REB","AST","FG3M","STL","BLK","P+R","P+A","R+A","PRA"]
-                            rows = []
-                            for sc in stat_list:
-                                ser = compute_stat_series(d, sc)
-                                out = breakeven_for_stat(ser)
-                                line = out["line"]
-                                if line is None:
-                                    rows.append({
-                                        "Stat": STAT_LABELS.get(sc, sc),
-                                        "Breakeven Line": "—",
-                                        "Over Implied (Fair)": "—",
-                                        "Under Implied (Fair)": "—",
-                                    })
-                                    continue
-                                over_p = out["over_prob"]
-                                under_p = out["under_prob"]
-                                rows.append({
-                                    "Stat": STAT_LABELS.get(sc, sc),
-                                    "Breakeven Line": fmt_half(line),
-                                    "Over Implied (Fair)": f"{over_p*100:.1f}% ({out['over_odds']})",
-                                    "Under Implied (Fair)": f"{under_p*100:.1f}% ({out['under_odds']})",
-                                })
+            d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n)
 
-                            breakeven_df = pd.DataFrame(rows, columns=["Stat","Breakeven Line","Over Implied (Fair)","Under Implied (Fair)"])
-                            st.table(breakeven_df.set_index("Stat"))
+            left, right = st.columns([1,2])
+
+            # ------------------------------
+            # LEFT COLUMN: PLAYER CARD
+            # ------------------------------
+            with left:
+                img = headshot_url(pid)
+                logo = get_team_logo_from_df(df)
+
+                img_html = f'<img src="{img}" width="120" style="border-radius:10px;">' if img else ""
+                logo_html = f'<img src="{logo}" width="55" style="margin-top:8px;">' if logo else ""
+
+                # ✅ Clean inline HTML string (NO triple quotes)
+                player_html = (
+                    f"<div style='text-align:center; padding:10px;'>"
+                    f"{img_html}<br>"
+                    f"{logo_html if logo_html else ''}"
+                    f"<div style='font-size:1.3rem; font-weight:700; margin-top:6px;'>"
+                    f"{player_name}"
+                    f"</div></div>"
+                )
+
+                st.markdown(player_html, unsafe_allow_html=True)
+
+                st.caption(
+                    f"Filters: Seasons {', '.join(seasons_b)} • Last {last_n} • "
+                    f"Min {min_min_b}m • {loc_choice}"
+                )
+
+            # ------------------------------
+            # RIGHT COLUMN: BREAKEVEN TABLE
+            # ------------------------------
+            with right:
+                stat_list = ["PTS","REB","AST","FG3M","STL","BLK","P+R","P+A","R+A","PRA"]
+                rows = []
+
+                for sc in stat_list:
+                    out = breakeven_for_stat(compute_stat_series(d, sc))
+                    line = out["line"]
+                    if line is None:
+                        rows.append({"Stat": STAT_LABELS[sc], "Breakeven Line": "—", "Over": "—", "Under": "—"})
+                        continue
+
+                    rows.append({
+                        "Stat": STAT_LABELS[sc],
+                        "Breakeven Line": fmt_half(line),
+                        "Over": f"{out['over_prob']*100:.1f}% ({out['over_odds']})",
+                        "Under": f"{out['under_prob']*100:.1f}% ({out['under_odds']})"
+                    })
+
+                st.table(pd.DataFrame(rows).set_index("Stat"))
