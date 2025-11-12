@@ -397,11 +397,13 @@ def headshot_url(pid: int | None) -> str | None:
         return None
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{pid}.png"
 
-def get_team_logo_from_df(df: pd.DataFrame) -> str | None:
+def get_team_logo(player_id: int | None):
+    if not player_id:
+        return None
     try:
-        team_id = int(df["TEAM_ID"].iloc[0])
-        return f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
-    except Exception:
+        # NBA CDN format for team logo
+        return f"https://cdn.nba.com/logos/nba/{player_id}/global/L/logo.svg"
+    except:
         return None
 
 def breakeven_for_stat(series: pd.Series) -> dict:
