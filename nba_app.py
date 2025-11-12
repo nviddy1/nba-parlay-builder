@@ -469,7 +469,7 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
+tab_builder, tab_breakeven, tab_defense = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🧱 Defensive Matrix"])
 
 # =========================
 # TAB 1: PARLAY BUILDER
@@ -830,10 +830,7 @@ with tab_breakeven:
                     })
                 st.table(pd.DataFrame(rows).set_index("Stat"))
 
-# =========================
-# ADD TAB 3: DEFENSIVE MATRIX
-# =========================
-tab_builder, tab_breakeven, tab_defense = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🧱 Defensive Matrix"])
+
 
 # =========================
 # TAB 3: DEFENSIVE MATRIX
