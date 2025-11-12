@@ -886,144 +886,172 @@ with tab_defense:
     st.subheader("🧱 Defensive Matrix — Defense vs. Position (Minute-Weighted, per 48)")
 
     # Controls
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col1:
-        position = st.selectbox("Position", ["PG", "SG", "SF", "PF", "C"], index=3, key="dm_pos")
-    with col2:
-        stat_choice = st.selectbox("Stat", ["PTS", "REB", "AST", "FG3M", "STL", "BLK", "PRA"], index=0, key="dm_stat")
-    with col3:
-        seasons_d = st.multiselect(
-            "Seasons",
+    c0, c1, c2, c3 = st.columns([1,1,1,1])
+    with c0:
+        position = st.selectbox("Position", ["PG","SG","SF","PF","C"], index=3, key="dm_pos")
+    with c1:
+        stat_choice = st.selectbox("Stat", ["PTS","REB","AST","FG3M","STL","BLK","PRA"], index=0, key="dm_stat")
+    with c2:
+        seasons_d = st.multiselect("Seasons",
             ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2024-25", "2025-26"],
-            key="dm_seasons"
-        )
-    include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="dm_playoffs")
+            default=["2024-25"], key="dm_seasons")
+    with c3:
+        include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="dm_playoffs")
+
+    # Performance knobs
+    cA, cB, cC = st.columns([1,1,1])
+    with cA:
+        last_n_def = st.slider("Last N games / player", 5, 82, 20, 1, key="dm_lastn")
+    with cB:
+        min_min_def = st.slider("Min minutes / game", 5, 40, 12, 1, key="dm_minmin")
+    with cC:
+        max_players = st.slider("Max players to scan", 30, 300, 120, 10, key="dm_maxp")
 
     if st.button("Compute Defensive Matrix", key="dm_compute"):
         st.write("⏳ Computing minute-weighted per-48 opponent averages…")
 
+        # Build candidate list limited to players who match the position (cached lookup) and cap size
         all_p = players.get_active_players()
-        rows = []
-
+        candidates = []
         for p in all_p:
+            pid = p["id"]
+            if position_matches(get_player_position(pid), position):
+                candidates.append(p)
+                if len(candidates) >= max_players:
+                    break
+
+        if not candidates:
+            st.warning("No players match the selected position.")
+            st.stop()
+
+        rows = []
+        prog = st.progress(0)
+        total = len(candidates)
+
+        for idx, p in enumerate(candidates, start=1):
             try:
                 pid = p["id"]
                 name = p["full_name"]
 
-                raw_pos = get_player_position(pid)
-                if not position_matches(raw_pos, position):
-                    continue
-
                 logs = fetch_gamelog(pid, seasons_d, include_playoffs_d, only_playoffs=False)
                 if logs.empty or "MIN_NUM" not in logs:
+                    prog.progress(min(idx/total, 1.0))
                     continue
 
-                # Opponent abbrev from MATCHUP
-                opp = logs["MATCHUP"].astype(str).str.extract(r"vs\. (\w+)|@ (\w+)", expand=True).bfill(axis=1).iloc[:, 0]
+                # Opponent abbreviation
+                opp = logs["MATCHUP"].astype(str).str.extract(r"vs\. (\w+)|@ (\w+)", expand=True).bfill(axis=1).iloc[:,0]
                 logs = logs.assign(OPP=opp).dropna(subset=["OPP"])
 
-                # Stat series + minute-weighted per-48 pieces
+                # Filters: minutes, last N games
+                logs = logs[logs["MIN_NUM"] >= min_min_def]
+                logs = logs.sort_values("GAME_DATE_DT", ascending=False).head(last_n_def)
+                if logs.empty:
+                    prog.progress(min(idx/total, 1.0))
+                    continue
+
                 ser = compute_stat_series(logs, stat_choice)
                 m = logs["MIN_NUM"].replace(0, np.nan)
                 keep = m.notna() & ser.notna()
                 if not keep.any():
+                    prog.progress(min(idx/total, 1.0))
                     continue
 
-                # Weighted mean of per-48 = sum(stat*48) / sum(minutes)
                 sub = pd.DataFrame({
                     "PLAYER": name,
                     "OPP": logs.loc[keep, "OPP"].values,
+                    # minute-weighted per-48 components
                     "STAT48_NUM": (ser.loc[keep] * 48.0).values,
                     "MINUTES": m.loc[keep].values
                 })
                 rows.append(sub)
             except Exception:
-                continue
+                pass
+            finally:
+                prog.progress(min(idx/total, 1.0))
 
         if not rows:
-            st.warning("No data found — try another season or position.")
-        else:
-            df_all = pd.concat(rows, ignore_index=True)
+            st.warning("No data after filters. Try increasing Last N / lowering Min minutes / raising Max players.")
+            st.stop()
 
-            # Minute-weighted average per opponent
-            agg = df_all.groupby("OPP").agg(
-                num=("STAT48_NUM","sum"),
-                den=("MINUTES","sum")
-            ).reset_index()
-            agg = agg[agg["den"] > 0]
-            agg["VAL"] = (agg["num"] / agg["den"]).round(1)   # one decimal
+        df_all = pd.concat(rows, ignore_index=True)
 
-            label = f"{stat_choice} Allowed per 48m to {position}s"
-            df_summary = agg[["OPP","VAL"]].rename(columns={"VAL": label})
-            df_summary = df_summary.sort_values(label, ascending=False)
+        # Minute-weighted average per opponent: sum(stat*48) / sum(minutes)
+        agg = df_all.groupby("OPP").agg(num=("STAT48_NUM","sum"), den=("MINUTES","sum")).reset_index()
+        agg = agg[agg["den"] > 0]
+        agg["VAL"] = (agg["num"] / agg["den"]).round(1)
 
-            # ------- Top 5 / Bottom 5 side-by-side (no index, larger fonts, team-colored cells)
-            def color_team_cell(val):
-                color = TEAM_COLORS.get(val, "#00c896")
-                return f"background-color:{color}; color:#fff; font-weight:700; text-align:center; border-radius:8px;"
+        label = f"{stat_choice} Allowed per 48m to {position}s"
+        df_summary = agg[["OPP","VAL"]].rename(columns={"VAL": label})
+        df_summary = df_summary.sort_values(label, ascending=False)
 
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
-                df_top = df_summary.head(5).reset_index(drop=True)
-                st.dataframe(
-                    df_top.style
-                        .hide(axis="index")
-                        .applymap(color_team_cell, subset=["OPP"])
-                        .set_properties(**{
-                            "font-size": "1.05rem",
-                            "text-align": "center",
-                            "color": "#f9fafb",
-                            "background-color": "#1a1b1e",
-                            "border": "0px"
-                        })
-                        .format({label: "{:.1f}"}),
-                    use_container_width=True
-                )
+        # ------- Top 5 / Bottom 5 (no index, larger fonts, team-colored team cells)
+        TEAM_COLORS = {
+            "ATL": "#E03A3E","BOS": "#007A33","BKN": "#000000","CHA": "#1D1160","CHI": "#CE1141",
+            "CLE": "#860038","DAL": "#00538C","DEN": "#0E2240","DET": "#C8102E","GSW": "#1D428A",
+            "HOU": "#CE1141","IND": "#002D62","LAC": "#C8102E","LAL": "#552583","MEM": "#5D76A9",
+            "MIA": "#98002E","MIL": "#00471B","MIN": "#0C2340","NOP": "#0C2340","NYK": "#F58426",
+            "OKC": "#007AC1","ORL": "#0077C0","PHI": "#006BB6","PHX": "#1D1160","POR": "#E03A3E",
+            "SAC": "#5A2D81","SAS": "#C4CED4","TOR": "#CE1141","UTA": "#002B5C","WAS": "#002B5C"
+        }
 
-            with c2:
-                st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
-                df_bottom = df_summary.sort_values(label, ascending=True).head(5).reset_index(drop=True)  # lowest on top
-                st.dataframe(
-                    df_bottom.style
-                        .hide(axis="index")
-                        .applymap(color_team_cell, subset=["OPP"])
-                        .set_properties(**{
-                            "font-size": "1.05rem",
-                            "text-align": "center",
-                            "color": "#f9fafb",
-                            "background-color": "#1a1b1e",
-                            "border": "0px"
-                        })
-                        .format({label: "{:.1f}"}),
-                    use_container_width=True
-                )
+        def color_team_cell(val):
+            color = TEAM_COLORS.get(val, "#00c896")
+            return f"background-color:{color}; color:#fff; font-weight:700; text-align:center; border-radius:8px;"
 
-            # ------- Full matrix (team colors + inline labels)
-            st.markdown("### 📊 Full Defensive Matrix")
-            df_plot = df_summary.sort_values(label, ascending=True)
-            fig, ax = plt.subplots(figsize=(8.8, 6))
-            bars = ax.barh(
-                df_plot["OPP"],
-                df_plot[label],
-                color=df_plot["OPP"].map(TEAM_COLORS).fillna("#00c896"),
-                edgecolor="none",
-                alpha=0.9
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
+            df_top = df_summary.head(5).reset_index(drop=True)
+            st.dataframe(
+                df_top.style
+                    .hide(axis="index")
+                    .applymap(color_team_cell, subset=["OPP"])
+                    .set_properties(**{
+                        "font-size": "1.1rem",
+                        "text-align": "center",
+                        "color": "#f9fafb",
+                        "background-color": "#1a1b1e",
+                        "border": "0px"
+                    })
+                    .format({label: "{:.1f}"}),
+                use_container_width=True
             )
-            for bar, team, val in zip(bars, df_plot["OPP"], df_plot[label]):
-                ax.text(
-                    float(val) + 0.2,
-                    bar.get_y() + bar.get_height()/2,
-                    f"{team} — {float(val):.1f}",
-                    va="center", ha="left",
-                    fontsize=8, color="#f9fafb"
-                )
-            ax.set_xlabel(f"Avg {STAT_LABELS.get(stat_choice, stat_choice)} per 48m Allowed to {position}s")
-            ax.set_ylabel("Opponent Team")
-            ax.grid(alpha=0.3, linestyle="--")
-            for spine in ax.spines.values():
-                spine.set_edgecolor("#444")
-            st.pyplot(fig, use_container_width=True)
 
+        with c2:
+            st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
+            df_bottom = df_summary.sort_values(label, ascending=True).head(5).reset_index(drop=True)
+            st.dataframe(
+                df_bottom.style
+                    .hide(axis="index")
+                    .applymap(color_team_cell, subset=["OPP"])
+                    .set_properties(**{
+                        "font-size": "1.1rem",
+                        "text-align": "center",
+                        "color": "#f9fafb",
+                        "background-color": "#1a1b1e",
+                        "border": "0px"
+                    })
+                    .format({label: "{:.1f}"}),
+                use_container_width=True
+            )
 
+        # ------- Full matrix (team colors + inline labels)
+        st.markdown("### 📊 Full Defensive Matrix")
+        df_plot = df_summary.sort_values(label, ascending=True)
+        fig, ax = plt.subplots(figsize=(9, 6))
+        bars = ax.barh(
+            df_plot["OPP"],
+            df_plot[label],
+            color=df_plot["OPP"].map(TEAM_COLORS).fillna("#00c896"),
+            edgecolor="none", alpha=0.9
+        )
+        for bar, team, val in zip(bars, df_plot["OPP"], df_plot[label]):
+            ax.text(float(val) + 0.2, bar.get_y() + bar.get_height()/2,
+                    f"{team} — {float(val):.1f}", va="center", ha="left",
+                    fontsize=9, color="#f9fafb")
+        ax.set_xlabel(f"Avg {STAT_LABELS.get(stat_choice, stat_choice)} per 48m Allowed to {position}s")
+        ax.set_ylabel("Opponent Team")
+        ax.grid(alpha=0.3, linestyle="--")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#444")
+        st.pyplot(fig, use_container_width=True)
