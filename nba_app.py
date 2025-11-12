@@ -193,7 +193,6 @@ def fmt_half(x: float | int) -> str:
         return f"{v:.1f}".rstrip("0").rstrip(".")
     except Exception:
         return str(x)
-
 def parse_input_line(text: str):
     t = (text or "").strip()
     if not t:
@@ -279,7 +278,6 @@ def to_minutes(val):
 def fetch_gamelog(player_id: int, seasons: list[str], include_playoffs: bool=False, only_playoffs: bool=False) -> pd.DataFrame:
     dfs = []
     for s in seasons:
-        # Regular season logs (skip if only playoffs)
         if not only_playoffs:
             try:
                 reg = playergamelog.PlayerGameLog(
@@ -291,7 +289,6 @@ def fetch_gamelog(player_id: int, seasons: list[str], include_playoffs: bool=Fal
             except Exception:
                 pass
 
-        # Playoff logs if selected or if only playoffs
         if include_playoffs or only_playoffs:
             try:
                 po = playergamelog.PlayerGameLog(
@@ -307,46 +304,36 @@ def fetch_gamelog(player_id: int, seasons: list[str], include_playoffs: bool=Fal
         return pd.DataFrame()
 
     df = pd.concat(dfs, ignore_index=True)
-
     for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
 
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
-    if "GAME_DATE" in df.columns:
-        df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
-    else:
-        df["GAME_DATE_DT"] = pd.Timestamp.now()
-
+    df["GAME_DATE_DT"] = pd.to_datetime(df.get("GAME_DATE"), errors="coerce")
     return df
 
-
 def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
-    s = pd.Series(dtype=float, index=df.index)
     if stat_code in ["PTS","REB","AST","STL","BLK","FG3M"]:
-        s = df[stat_code].astype(float)
-    elif stat_code == "P+R":
-        s = (df["PTS"] + df["REB"]).astype(float)
-    elif stat_code == "P+A":
-        s = (df["PTS"] + df["AST"]).astype(float)
-    elif stat_code == "R+A":
-        s = (df["REB"] + df["AST"]).astype(float)
-    elif stat_code == "PRA":
-        s = (df["PTS"] + df["REB"] + df["AST"]).astype(float)
-    elif stat_code == "DOUBDOUB":
+        return df[stat_code].astype(float)
+    if stat_code == "P+R":
+        return (df["PTS"] + df["REB"]).astype(float)
+    if stat_code == "P+A":
+        return (df["PTS"] + df["AST"]).astype(float)
+    if stat_code == "R+A":
+        return (df["REB"] + df["AST"]).astype(float)
+    if stat_code == "PRA":
+        return (df["PTS"] + df["REB"] + df["AST"]).astype(float)
+    if stat_code == "DOUBDOUB":
         pts = (df["PTS"] >= 10).astype(int)
         reb = (df["REB"] >= 10).astype(int)
         ast = (df["AST"] >= 10).astype(int)
-        s = ((pts + reb + ast) >= 2).astype(int)
-    elif stat_code == "TRIPDOUB":
+        return ((pts + reb + ast) >= 2).astype(int)
+    if stat_code == "TRIPDOUB":
         pts = (df["PTS"] >= 10).astype(int)
         reb = (df["REB"] >= 10).astype(int)
         ast = (df["AST"] >= 10).astype(int)
-        s = ((pts + reb + ast) >= 3).astype(int)
-    else:
-        s = df["PTS"].astype(float)
-    return s
-
+        return ((pts + reb + ast) >= 3).astype(int)
+    return df["PTS"].astype(float)
 def leg_probability(df: pd.DataFrame, stat_code: str, direction: str, thr: float) -> tuple[float,int,int]:
     ser = compute_stat_series(df, stat_code)
     if stat_code in ["DOUBDOUB","TRIPDOUB"]:
@@ -362,12 +349,10 @@ def headshot_url(pid: int | None) -> str | None:
         return None
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{pid}.png"
 
-def get_team_logo(player_id: int | None):
-    if not player_id:
-        return None
+def get_team_logo_from_df(df):
     try:
-        # NBA CDN format for team logo
-        return f"https://cdn.nba.com/logos/nba/{player_id}/global/L/logo.svg"
+        team_id = df["TEAM_ID"].iloc[0]
+        return f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
     except:
         return None
 
@@ -390,55 +375,16 @@ def breakeven_for_stat(series: pd.Series) -> dict:
     return {"line": float(best_t), "over_prob": over_prob, "under_prob": under_prob,
             "over_odds": prob_to_american(over_prob), "under_odds": prob_to_american(under_prob)}
 
-def get_team_logo_from_df(df):
-    try:
-        team_id = df["TEAM_ID"].iloc[0]
-        return f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
-    except:
-        return None
-
-def sparkline(values, thr):
-    import matplotlib.pyplot as plt
-    import numpy as np
-    from io import BytesIO
-    import base64
-
-    # clean series
-    vals = pd.to_numeric(values, errors="coerce").dropna()
-    if vals.empty:
-        return ""
-
-    # create sparkline
-    fig, ax = plt.subplots(figsize=(4,0.35))  # tiny chart
-    fig.patch.set_alpha(0.0)
-    ax.set_axis_off()
-
-    # line
-    ax.plot(vals.index, vals.values, linewidth=1, alpha=0.8)
-
-    # threshold line
-    ax.axhline(thr, color="white", linestyle="--", linewidth=1)
-
-    # convert to inline base64
-    buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
-    img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f'<img src="data:image/png;base64,{img_b64}" style="width:100%;height:22px;opacity:0.9;" />'
-
 
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_defense = st.tabs(
-    ["🧮 Parlay Builder", "🧷 Breakeven", "🛡️ Defensive Matrix"]
-)
+tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
 
 # =========================
 # TAB 1: PARLAY BUILDER
 # =========================
 with tab_builder:
-    # Filters Row
     fc1, fc2, fc3 = st.columns([1.2, 1, 1])
     with fc1:
         seasons = st.multiselect(
@@ -450,20 +396,16 @@ with tab_builder:
         include_playoffs = st.checkbox("Include Playoffs", value=False, key="pb_playoffs")
         only_playoffs = st.checkbox("Only Playoffs", value=False, key="pb_only_playoffs")
         nba_cup_only = st.checkbox("NBA Cup Games Only", key="cup_only_builder")
-
-
     with fc2:
         min_minutes = st.slider("Min Minutes", 0, 40, 20, 1, key="min_minutes_builder")
     with fc3:
         last_n_games = st.slider("Last N Games", 5, 100, 20, 1, key="parlay_lastn")
 
-    # State
     if "legs" not in st.session_state:
         st.session_state.legs = []
     if "awaiting_input" not in st.session_state:
         st.session_state.awaiting_input = True
 
-    # Buttons row
     c1, c2 = st.columns([1,1])
     with c1:
         if st.button("➕ Add Leg"):
@@ -474,7 +416,6 @@ with tab_builder:
 
     st.write("**Input bet**")
 
-    # Existing legs edit UI
     if st.session_state.legs:
         for i, leg in enumerate(st.session_state.legs):
             leg_no = i + 1
@@ -502,7 +443,6 @@ with tab_builder:
                         st.session_state.legs.pop(i)
                         st.rerun()
 
-    # Freeform input box
     if st.session_state.awaiting_input:
         bet_text = st.text_input(
             "Input bet",
@@ -517,18 +457,15 @@ with tab_builder:
                 st.session_state.awaiting_input = False
                 st.rerun()
 
-    # Enter parlay odds
     parlay_odds = 0
     if len(st.session_state.legs) > 1:
         st.subheader("🎯 Combined Parlay Odds")
         parlay_odds = st.number_input("Parlay Odds (+300, -150)", value=0, step=5, key="parlay_odds")
 
-    # Compute action
     if st.session_state.legs and st.button("Compute"):
         st.write("---")
         rows = []
         probs_for_parlay = []
-
         plt.rcParams.update({
             "axes.facecolor": "#1e1f22",
             "figure.facecolor": "#1e1f22",
@@ -539,13 +476,6 @@ with tab_builder:
             "grid.color": "#374151",
         })
 
-        def get_team_logo_from_df(df):
-            try:
-                return f"https://cdn.nba.com/logos/nba/{int(df['TEAM_ID'].iloc[0])}/global/L/logo.svg"
-            except:
-                return None
-
-        # Loop legs
         for leg in st.session_state.legs:
             name = leg["player"]
             pid = get_player_id(name)
@@ -559,7 +489,6 @@ with tab_builder:
             df = pd.DataFrame()
             if pid:
                 df = fetch_gamelog(pid, seasons, include_playoffs, only_playoffs)
-
             if df.empty:
                 st.warning(f"Could not compute for **{name}**")
                 continue
@@ -570,11 +499,6 @@ with tab_builder:
                 d = d[d["MATCHUP"].astype(str).str.contains("vs")]
             elif loc == "Away":
                 d = d[d["MATCHUP"].astype(str).str.contains("@")]
-
-            # NBA Cup filter
-            if nba_cup_only:
-                d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
-
             d = d.sort_values("GAME_DATE_DT", ascending=False)
             if rng == "L10": d = d.head(10)
             elif rng == "L20": d = d.head(20)
@@ -586,7 +510,6 @@ with tab_builder:
             ev = None if book_prob is None else (p - book_prob) * 100.0
             if p > 0:
                 probs_for_parlay.append(p)
-
             rows.append({
                 "name": name, "stat": stat, "thr": thr, "dir": direction,
                 "loc": loc, "range": rng, "odds": odds,
@@ -594,129 +517,28 @@ with tab_builder:
                 "book_prob": book_prob, "ev": ev, "df": d
             })
 
-        # Combined Parlay Stats
         combined_p = float(np.prod(probs_for_parlay)) if probs_for_parlay else 0.0
         combined_fair = prob_to_american(combined_p) if combined_p > 0 else "N/A"
         entered_prob = american_to_implied(parlay_odds)
-        book_implied_prob = entered_prob * 100 if entered_prob else None
         parlay_ev = None if entered_prob is None else (combined_p - entered_prob) * 100.0
-
         cls = "neutral"
         if parlay_ev is not None:
             cls = "pos" if parlay_ev >= 0 else "neg"
 
         combined_prob_disp = f"{combined_p*100:.2f}%" if combined_p > 0 else "—"
         parlay_ev_disp = "—" if parlay_ev is None else f"{parlay_ev:.2f}%"
-        book_implied_str = "—" if book_implied_prob is None else f"{book_implied_prob:.2f}%"
 
-        # ✅ Combined Parlay Card (top)
         st.markdown(f"""
 <div class="card {cls}">
   <h2>💥 Combined Parlay</h2>
-  <div style="font-size:0.95rem;color:#9ca3af;margin-bottom:14px;">
-      Includes all legs with your filters
-  </div>
   <div class="row">
     <div class="m"><div class="lab">Model Parlay Probability</div><div class="val">{combined_prob_disp}</div></div>
     <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{combined_fair}</div></div>
     <div class="m"><div class="lab">Entered Odds</div><div class="val">{parlay_odds}</div></div>
-    <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied_str}</div></div>
     <div class="m"><div class="lab">Expected Value</div><div class="val">{parlay_ev_disp}</div></div>
   </div>
-  <div style="margin-top:14px;">
-    <span class="chip">
-      {('🔥 +EV Parlay Detected' if (parlay_ev is not None and parlay_ev >= 0)
-        else '⚠️ Negative EV Parlay')}
-    </span>
-  </div>
 </div>
 """, unsafe_allow_html=True)
-
-        # ✅ Player Cards
-        for r in rows:
-            pid = get_player_id(r["name"])
-            head = headshot_url(pid)
-            logo = get_team_logo_from_df(r["df"])
-
-            cls = "neutral"
-            if r["ev"] is not None:
-                cls = "pos" if r["ev"] >= 0 else "neg"
-
-            img_html = f'<img src="{head}" width="72" style="border-radius:12px;">' if head else ""
-            logo_html = f'<img src="{logo}" width="38" style="margin-left:10px;">' if logo else ""
-
-            stat_label = STAT_LABELS.get(r["stat"], r["stat"])
-            dir_word = "O" if r["dir"] == "Over" else "U"
-            cond_text = f"{dir_word} {fmt_half(r['thr'])} {stat_label} — {r['range']} — {r['loc'].replace(' Only','')}"
-
-            book_implied = "—" if r["book_prob"] is None else f"{r['book_prob']*100:.1f}%"
-            ev_disp = "—" if r["ev"] is None else f"{r['ev']:.2f}%"
-
-            st.markdown(f"""
-<div class="card {cls}">
-  <div style="display:flex;align-items:center;gap:12px;">
-      {img_html}
-      <div style="display:flex;flex-direction:column;">
-          <h2 style="margin:0;font-size:1.25rem;">{r['name']}</h2>
-          <div style="font-size:0.90rem;color:#9ca3af;margin-top:4px;">{cond_text}</div>
-      </div>
-      {logo_html}
-  </div>
-  <div class="row" style="margin-top:18px;">
-    <div class="m"><div class="lab">Model Hit Rate</div><div class="val">{r['p']*100:.1f}% ({r['hits']}/{r['total']})</div></div>
-    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{r['fair']}</div></div>
-    <div class="m"><div class="lab">Sportsbook Odds</div><div class="val">{r['odds']}</div></div>
-    <div class="m"><div class="lab">Book Implied</div><div class="val">{book_implied}</div></div>
-    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_disp}</div></div>
-  </div>
-  <div style="margin-top:10px;">
-    <span class="chip">{('🔥 +EV Play Detected' if (r['ev'] is not None and r['ev'] >= 0) else '⚠️ Negative EV Play')}</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-            # ✅ Discrete Value Distribution (1 bar per stat result)
-            if r["stat"] not in ["DOUBDOUB","TRIPDOUB"]:
-                ser = compute_stat_series(r["df"], r["stat"]).dropna().astype(int)
-                value_counts = ser.value_counts().sort_index()
-
-                data_min, data_max = int(ser.min()), int(ser.max())
-                all_vals = list(range(data_min, data_max + 1))
-                counts = [value_counts.get(v, 0) for v in all_vals]
-                label_count = max(1, (data_max - data_min) // 5)
-
-                with st.expander("📊 Show Game Distribution", expanded=False):
-                    fig, ax = plt.subplots(figsize=(6.5, 2.4))
-                    fig.patch.set_facecolor("#1e1f22")
-                    ax.set_facecolor("#1e1f22")
-
-                    color = "#00c896" if (r["ev"] is not None and r["ev"] >= 0) else "#e05a5a"
-
-                    ax.bar(all_vals, counts,
-                           color=color, alpha=0.75, edgecolor="#d1d5db",
-                           linewidth=0.5, width=0.9)
-
-                    ax.axvline(r["thr"], color="white", linestyle="--", linewidth=1.4)
-
-                    ax.set_xticks(all_vals)
-                    ax.set_xticklabels(
-                        [str(v) if ((v - data_min) % label_count == 0 or v == r["thr"]) else "" for v in all_vals],
-                        color="#9ca3af", fontsize=8
-                    )
-                    ax.tick_params(axis="y", colors="#9ca3af", labelsize=8)
-
-                    for spine in ax.spines.values():
-                        spine.set_edgecolor("#4b5563")
-
-                    ax.grid(color="#374151", linestyle="--", linewidth=0.5, alpha=0.55)
-                    ax.set_axisbelow(True)
-                    ax.set_ylabel("")
-                    ax.set_xlabel("")
-
-                    st.pyplot(fig, use_container_width=True)
-# ===== End Parlay Tab =====
-
-
 # =========================
 # TAB 2: BREAKEVEN
 # =========================
@@ -735,7 +557,6 @@ with tab_breakeven:
         include_playoffs_b = st.checkbox("Include Playoffs", value=False, key="be_playoffs")
         only_playoffs_b = st.checkbox("Only Playoffs", value=False, key="be_only_playoffs")
         nba_cup_only_b = st.checkbox("NBA Cup Games Only", key="cup_only_break")
-
 
     cA, cB, cC, cD = st.columns([2,1,1,1])
     with cA:
@@ -766,8 +587,7 @@ with tab_breakeven:
                 d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
 
             if nba_cup_only_b:
-                d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
-
+                d = d[d["GAME_DATE_DT"].isin([])]  # placeholder for NBA_CUP_DATES if you define them
 
             d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n)
 
@@ -783,7 +603,6 @@ with tab_breakeven:
                 img_html = f'<img src="{img}" width="120" style="border-radius:10px;">' if img else ""
                 logo_html = f'<img src="{logo}" width="55" style="margin-top:8px;">' if logo else ""
 
-                # ✅ Clean inline HTML string (NO triple quotes)
                 player_html = (
                     f"<div style='text-align:center; padding:10px;'>"
                     f"{img_html}<br>"
@@ -822,161 +641,3 @@ with tab_breakeven:
                     })
 
                 st.table(pd.DataFrame(rows).set_index("Stat"))
-
-# =========================
-# TAB 3: DEFENSIVE MATRIX
-# =========================
-with tab_defense:
-    st.subheader("🛡️ Defensive Matchup Finder")
-
-    # ---- FILTERS (Same as breakeven) ----
-    f1, f2 = st.columns([1.2, 1])
-    with f1:
-        seasons_d = st.multiselect(
-            "Seasons",
-            ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2025-26","2024-25"],
-            key="seasons_defense"
-        )
-        include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="def_playoffs")
-        only_playoffs_d = st.checkbox("Only Playoffs", value=False, key="def_only_playoffs")
-        nba_cup_only_d = st.checkbox("NBA Cup Games Only", key="cup_only_def")
-
-    cA, cB, cC, cD = st.columns([2,1,1,1])
-    with cA:
-        pass  # no player input; defensive matrix only
-    with cB:
-        last_n_d = st.slider("Last N", 5, 100, 20, 1, key="def_lastn")
-    with cC:
-        min_min_d = st.slider("Min Min", 0, 40, 20, 1, key="def_minmin")
-    with cD:
-        loc_choice_d = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="def_loc")
-
-    # ---- POSITION + STAT INPUT UI ----
-    st.markdown("### 📍 Find Best/Worst Matchups")
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        matchup_type = st.selectbox("Type", ["Best Matchups", "Worst Matchups"])
-    with c2:
-        pos_choice = st.selectbox("Position", ["PG","SG","SF","PF","C"])
-    with c3:
-        stat_choice = st.selectbox("Stat", ["PTS","REB","AST","STL","BLK","P+R","P+A","PRA"])
-
-    go = st.button("Search Matchups")
-
-    # ---- HELPER: Get Player Position ----
-    from nba_api.stats.endpoints import commonplayerinfo
-
-    @st.cache_data
-    def get_position(player_id):
-        try:
-            info = commonplayerinfo.CommonPlayerInfo(player_id=player_id).get_data_frames()[0]
-            pos = info.get("POSITION", [""])[0]
-            return pos[:2].upper()
-        except:
-            return ""
-
-    # ---- BUILD DEFENSE TABLE ----
-    TEAM_POS = []
-    from nba_api.stats.static import teams
-    TEAM_LIST = sorted([t["full_name"] for t in teams.get_teams()])
-
-    stat_map = {
-        "PTS": "PTS",
-        "REB": "REB",
-        "AST": "AST",
-        "STL": "STL",
-        "BLK": "BLK",
-        "P+R": ["PTS","REB"],
-        "P+A": ["PTS","AST"],
-        "PRA": ["PTS","REB","AST"],
-    }
-
-    @st.cache_data(show_spinner=False)
-    def compute_defense_matrix(seasons, include_po, only_po):
-        data = []
-        for p in players.get_active_players():
-            pid = p["id"]
-            pos = get_position(pid)
-            if pos not in ["PG","SG","SF","PF","C"]:
-                continue
-
-            df = fetch_gamelog(pid, seasons, include_po, only_po)
-            if df.empty:
-                continue
-
-            df["POS"] = pos
-            data.append(df)
-
-        if not data:
-            return pd.DataFrame()
-
-        alldata = pd.concat(data)
-
-        return alldata
-
-    df_all = compute_defense_matrix(seasons_d, include_playoffs_d, only_playoffs_d)
-
-    if go:
-        d = df_all.copy()
-        d = d[d["MIN_NUM"] >= min_min_d]
-        d = d[d["POS"] == pos_choice]
-
-        if loc_choice_d == "Home Only":
-            d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
-        elif loc_choice_d == "Away":
-            d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-
-        if nba_cup_only_d:
-            d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
-
-        d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_d)
-
-        results = []
-        for team in d["TEAM_ID"].unique():
-            opp = d[d["TEAM_ID"] == team]
-
-            if isinstance(stat_map[stat_choice], list):
-                val = opp[stat_map[stat_choice]].sum(axis=1).mean()
-            else:
-                val = opp[stat_map[stat_choice]].mean()
-
-            results.append((team, val))
-
-        res_df = pd.DataFrame(results, columns=["TEAM_ID","AVG"])
-        res_df = res_df.dropna().sort_values("AVG", ascending=(matchup_type=="Best Matchups")).head(3)
-
-        st.markdown("### 🎯 Top Matchups")
-        for _, row in res_df.iterrows():
-            tid = int(row["TEAM_ID"])
-            logo = f"https://cdn.nba.com/logos/nba/{tid}/global/L/logo.svg"
-            st.markdown(
-                f"""
-                <div class="card neutral">
-                <h2><img src="{logo}" width="36" style="margin-right:8px;vertical-align:middle;"> 
-                {row['AVG']:.2f} {stat_choice} allowed vs {pos_choice}</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-    # ---- FULL MATRIX BELOW ----
-    st.markdown("### 📊 Full Defensive Matrix")
-    if not df_all.empty:
-        mat = []
-        for team in df_all["TEAM_ID"].unique():
-            for pos in ["PG","SG","SF","PF","C"]:
-                sub = df_all[(df_all["TEAM_ID"] == team) & (df_all["POS"] == pos)]
-                if sub.empty:
-                    continue
-                row = {"TEAM_ID": team, "POS": pos}
-                for stat in ["PTS","REB","AST","STL","BLK"]:
-                    row[stat] = sub[stat].mean()
-                row["P+R"] = (sub["PTS"] + sub["REB"]).mean()
-                row["P+A"] = (sub["PTS"] + sub["AST"]).mean()
-                row["PRA"] = (sub["PTS"] + sub["REB"] + sub["AST"]).mean()
-                mat.append(row)
-
-        st.dataframe(pd.DataFrame(mat))
-
