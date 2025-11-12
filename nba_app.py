@@ -895,7 +895,7 @@ with tab_defense:
         seasons_d = st.multiselect(
             "Seasons",
             ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2024-25"],
+            default=["2024-25", "2025-26"],
             key="dm_seasons"
         )
     include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="dm_playoffs")
