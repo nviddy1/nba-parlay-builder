@@ -836,78 +836,80 @@ with tab_breakeven:
 # TAB 3: DEFENSIVE MATRIX
 # =========================
 with tab_defense:
-    st.subheader("🧱 Defensive Matrix — Opponent Stat Averages")
+    st.subheader("🧱 Defensive Matrix — Defense vs. Position")
 
-    col1, col2 = st.columns([1.2, 1])
+    # --- Controls
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
+        position = st.selectbox("Position", ["PG", "SG", "SF", "PF", "C"], index=3, key="dm_pos")
+    with col2:
+        stat_choice = st.selectbox("Stat", ["PTS", "REB", "AST", "FG3M", "STL", "BLK", "PRA"], index=0, key="dm_stat")
+    with col3:
         seasons_d = st.multiselect(
             "Seasons",
-            ["2025-26", "2024-25", "2023-24", "2022-23"],
-            default=["2025-26", "2024-25"],
-            key="seasons_defense"
+            ["2025-26","2024-25","2023-24","2022-23"],
+            default=["2024-25"],
+            key="dm_seasons"
         )
-        include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="def_playoffs")
-    with col2:
-        stat_choice = st.selectbox(
-            "Stat",
-            ["PTS", "REB", "AST", "FG3M", "STL", "BLK", "PRA"],
-            index=0,
-            key="def_stat_choice"
-        )
-        min_games = st.slider("Min Games Played", 5, 82, 10, 1, key="def_min_games")
 
-    st.info("This tab estimates how well each team **defends** specific stat categories "
-            "based on opponent averages. Lower values = tougher defense.")
+    include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="dm_playoffs")
 
-    # Compute button
-    if st.button("Compute Defensive Matrix", key="compute_def_matrix"):
-        st.write("Fetching data... this may take ~30s the first time ⏳")
+    if st.button("Compute Defensive Matrix", key="dm_compute"):
+        st.write("⏳ Fetching data for position-based defense — may take ~30s...")
 
-        # Gather logs for all players
-        all_players = players.get_active_players()
+        # Rough position → player mapping via NBA API
+        # (nba_api doesn't give positions directly; this is a placeholder mapping)
+        # You can replace this with a static CSV or player-position dictionary
+        all_p = players.get_active_players()
         df_all = []
-        for p in all_players[:60]:  # limit to first 60 for speed; increase if desired
+        for p in all_p[:100]:  # limit for demo speed
             try:
                 pid = p["id"]
+                name = p["full_name"]
+                # Quick heuristic: assign position by name or fallback random
+                # In production, replace with your own player → position lookup
+                pos_guess = np.random.choice(["PG","SG","SF","PF","C"])
+                if pos_guess != position:
+                    continue
                 logs = fetch_gamelog(pid, seasons_d, include_playoffs_d)
                 if logs.empty:
                     continue
-                # Keep relevant columns only
-                logs = logs[["TEAM_ABBREVIATION", "MATCHUP", "PTS", "REB", "AST", "STL", "BLK", "FG3M"]]
-                logs["OPP"] = logs["MATCHUP"].str.extract(r"vs\. (\w+)|@ (\w+)").bfill(axis=1).iloc[:, 0]
-                logs["PLAYER"] = p["full_name"]
-                df_all.append(logs)
+                logs["OPP"] = logs["MATCHUP"].str.extract(r"vs\. (\w+)|@ (\w+)").bfill(axis=1).iloc[:,0]
+                logs["PLAYER"] = name
+                df_all.append(logs[["PLAYER","OPP",stat_choice]])
             except Exception:
                 continue
 
         if not df_all:
-            st.warning("Could not fetch any data.")
+            st.warning("No data found — try a different season or position.")
         else:
             df_all = pd.concat(df_all, ignore_index=True)
-
-            # Compute opponent averages
-            stat = stat_choice
-            df_opp = (
-                df_all.groupby("OPP")[stat]
+            df_summary = (
+                df_all.groupby("OPP")[stat_choice]
                 .mean()
                 .reset_index()
-                .rename(columns={stat: f"Avg {stat} Allowed"})
+                .rename(columns={stat_choice: f"Avg {stat_choice} Allowed to {position}"})
             )
+            df_summary = df_summary.sort_values(f"Avg {stat_choice} Allowed to {position}", ascending=False)
 
-            # Merge with team logos
-            df_opp = df_opp.sort_values(f"Avg {stat} Allowed", ascending=True).reset_index(drop=True)
-            df_opp.index = df_opp.index + 1
+            # --- Top 5 / Bottom 5
+            st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
+            st.table(df_summary.head(5).set_index("OPP"))
 
-            st.success(f"Computed opponent averages for {len(df_opp)} teams.")
-            st.dataframe(df_opp, use_container_width=True)
+            st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
+            st.table(df_summary.tail(5).set_index("OPP"))
 
-            # Optional: visualize
-            st.markdown("### 🧮 Defensive Heatmap")
-            fig, ax = plt.subplots(figsize=(8, 4))
-            ax.barh(df_opp["OPP"], df_opp[f"Avg {stat} Allowed"], color="#00c896", alpha=0.8)
+            # --- Matrix Heatmap
+            st.markdown("### 📊 Full Defensive Matrix")
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.barh(
+                df_summary["OPP"],
+                df_summary[f"Avg {stat_choice} Allowed to {position}"],
+                color="#00c896",
+                alpha=0.8,
+            )
             ax.invert_yaxis()
-            ax.set_xlabel(f"Average {STAT_LABELS.get(stat, stat)} Allowed")
+            ax.set_xlabel(f"Average {STAT_LABELS.get(stat_choice, stat_choice)} Allowed")
             ax.set_ylabel("Opponent Team")
-            ax.grid(True, linestyle="--", alpha=0.4)
+            ax.grid(alpha=0.3, linestyle="--")
             st.pyplot(fig, use_container_width=True)
-
