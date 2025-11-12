@@ -836,7 +836,7 @@ with tab_breakeven:
 # TAB 3: DEFENSIVE MATRIX
 # =========================
 with tab_defense:
-    st.subheader("🧱 Defensive Matrix — Defense vs. Position (Per 30 Minutes)")
+    st.subheader("🧱 Defensive Matrix — Defense vs. Position (Per 48 Minutes)")
 
     # --- Controls
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -847,7 +847,7 @@ with tab_defense:
     with col3:
         seasons_d = st.multiselect(
             "Seasons",
-            ["2025-26","2024-25","2023-24","2022-23"],
+            ["2025-26", "2024-25", "2023-24", "2022-23"],
             default=["2024-25"],
             key="dm_seasons"
         )
@@ -855,7 +855,7 @@ with tab_defense:
     include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="dm_playoffs")
 
     if st.button("Compute Defensive Matrix", key="dm_compute"):
-        st.write("⏳ Computing per-30-minute defensive averages — please wait...")
+        st.write("⏳ Computing per-48-minute defensive averages — please wait...")
 
         all_p = players.get_active_players()
         df_all = []
@@ -879,11 +879,12 @@ with tab_defense:
                     continue
 
                 ser = compute_stat_series(logs, stat_choice)
-                logs["PER30"] = ser / logs["MIN_NUM"].replace(0, np.nan) * 30.0
-                logs = logs.dropna(subset=["PER30"])
+                # Normalize per 48 minutes
+                logs["PER48"] = ser / logs["MIN_NUM"].replace(0, np.nan) * 48.0
+                logs = logs.dropna(subset=["PER48"])
 
                 logs["PLAYER"] = name
-                df_all.append(logs[["PLAYER", "OPP", "PER30"]])
+                df_all.append(logs[["PLAYER", "OPP", "PER48"]])
             except Exception:
                 continue
 
@@ -893,28 +894,34 @@ with tab_defense:
             df_all = pd.concat(df_all, ignore_index=True)
 
             df_summary = (
-                df_all.groupby("OPP")["PER30"]
+                df_all.groupby("OPP")["PER48"]
                 .mean()
                 .reset_index()
-                .rename(columns={"PER30": f"{stat_choice} Allowed per 30m to {position}s"})
+                .rename(columns={"PER48": f"{stat_choice} Allowed per 48m to {position}s"})
             )
 
-            df_summary[f"{stat_choice} Allowed per 30m to {position}s"] = (
-                df_summary[f"{stat_choice} Allowed per 30m to {position}s"].round(1)
+            df_summary[f"{stat_choice} Allowed per 48m to {position}s"] = (
+                df_summary[f"{stat_choice} Allowed per 48m to {position}s"].round(1)
             )
 
-            df_summary = df_summary.sort_values(f"{stat_choice} Allowed per 30m to {position}s", ascending=False)
+            df_summary = df_summary.sort_values(f"{stat_choice} Allowed per 48m to {position}s", ascending=False)
 
             # --- Side-by-side Top 5 and Bottom 5
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
                 top5 = df_summary.head(5).reset_index(drop=True)
-                st.dataframe(top5.style.format({f"{stat_choice} Allowed per 30m to {position}s": "{:.1f}"}), use_container_width=True)
+                st.dataframe(
+                    top5.style.format({f"{stat_choice} Allowed per 48m to {position}s": "{:.1f}"}),
+                    use_container_width=True
+                )
             with c2:
                 st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
                 bot5 = df_summary.tail(5).reset_index(drop=True)
-                st.dataframe(bot5.style.format({f"{stat_choice} Allowed per 30m to {position}s": "{:.1f}"}), use_container_width=True)
+                st.dataframe(
+                    bot5.style.format({f"{stat_choice} Allowed per 48m to {position}s": "{:.1f}"}),
+                    use_container_width=True
+                )
 
             # --- Team Color Coding
             TEAM_COLORS = {
@@ -930,20 +937,38 @@ with tab_defense:
 
             df_summary["COLOR"] = df_summary["OPP"].map(TEAM_COLORS).fillna("#00c896")
 
-            # --- Matrix Bar Chart (Team Colors)
+            # --- Matrix Bar Chart (Team Colors + Labels)
             st.markdown("### 📊 Full Defensive Matrix")
-            df_plot = df_summary.sort_values(f"{stat_choice} Allowed per 30m to {position}s", ascending=True)
+            df_plot = df_summary.sort_values(f"{stat_choice} Allowed per 48m to {position}s", ascending=True)
 
-            fig, ax = plt.subplots(figsize=(8, 6))
-            ax.barh(
+            fig, ax = plt.subplots(figsize=(8.5, 6))
+            bars = ax.barh(
                 df_plot["OPP"],
-                df_plot[f"{stat_choice} Allowed per 30m to {position}s"],
+                df_plot[f"{stat_choice} Allowed per 48m to {position}s"],
                 color=df_plot["COLOR"],
-                edgecolor="none"
+                edgecolor="none",
+                alpha=0.9
             )
-            ax.set_xlabel(f"Avg {STAT_LABELS.get(stat_choice, stat_choice)} per 30m Allowed to {position}s")
+
+            # Inline labels on each bar (team + value)
+            for bar, team, val in zip(
+                bars,
+                df_plot["OPP"],
+                df_plot[f"{stat_choice} Allowed per 48m to {position}s"]
+            ):
+                ax.text(
+                    val + 0.2, bar.get_y() + bar.get_height() / 2,
+                    f"{team} — {val:.1f}",
+                    va="center",
+                    ha="left",
+                    fontsize=8,
+                    color="#f9fafb"
+                )
+
+            ax.set_xlabel(f"Avg {STAT_LABELS.get(stat_choice, stat_choice)} per 48m Allowed to {position}s")
             ax.set_ylabel("Opponent Team")
             ax.grid(alpha=0.3, linestyle="--")
             for spine in ax.spines.values():
                 spine.set_edgecolor("#444")
             st.pyplot(fig, use_container_width=True)
+
