@@ -829,3 +829,88 @@ with tab_breakeven:
                         "Under": f"{out['under_prob']*100:.1f}% ({out['under_odds']})"
                     })
                 st.table(pd.DataFrame(rows).set_index("Stat"))
+
+# =========================
+# ADD TAB 3: DEFENSIVE MATRIX
+# =========================
+tab_builder, tab_breakeven, tab_defense = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🧱 Defensive Matrix"])
+
+# =========================
+# TAB 3: DEFENSIVE MATRIX
+# =========================
+with tab_defense:
+    st.subheader("🧱 Defensive Matrix — Opponent Stat Averages")
+
+    col1, col2 = st.columns([1.2, 1])
+    with col1:
+        seasons_d = st.multiselect(
+            "Seasons",
+            ["2025-26", "2024-25", "2023-24", "2022-23"],
+            default=["2025-26", "2024-25"],
+            key="seasons_defense"
+        )
+        include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="def_playoffs")
+    with col2:
+        stat_choice = st.selectbox(
+            "Stat",
+            ["PTS", "REB", "AST", "FG3M", "STL", "BLK", "PRA"],
+            index=0,
+            key="def_stat_choice"
+        )
+        min_games = st.slider("Min Games Played", 5, 82, 10, 1, key="def_min_games")
+
+    st.info("This tab estimates how well each team **defends** specific stat categories "
+            "based on opponent averages. Lower values = tougher defense.")
+
+    # Compute button
+    if st.button("Compute Defensive Matrix", key="compute_def_matrix"):
+        st.write("Fetching data... this may take ~30s the first time ⏳")
+
+        # Gather logs for all players
+        all_players = players.get_active_players()
+        df_all = []
+        for p in all_players[:60]:  # limit to first 60 for speed; increase if desired
+            try:
+                pid = p["id"]
+                logs = fetch_gamelog(pid, seasons_d, include_playoffs_d)
+                if logs.empty:
+                    continue
+                # Keep relevant columns only
+                logs = logs[["TEAM_ABBREVIATION", "MATCHUP", "PTS", "REB", "AST", "STL", "BLK", "FG3M"]]
+                logs["OPP"] = logs["MATCHUP"].str.extract(r"vs\. (\w+)|@ (\w+)").bfill(axis=1).iloc[:, 0]
+                logs["PLAYER"] = p["full_name"]
+                df_all.append(logs)
+            except Exception:
+                continue
+
+        if not df_all:
+            st.warning("Could not fetch any data.")
+        else:
+            df_all = pd.concat(df_all, ignore_index=True)
+
+            # Compute opponent averages
+            stat = stat_choice
+            df_opp = (
+                df_all.groupby("OPP")[stat]
+                .mean()
+                .reset_index()
+                .rename(columns={stat: f"Avg {stat} Allowed"})
+            )
+
+            # Merge with team logos
+            df_opp = df_opp.sort_values(f"Avg {stat} Allowed", ascending=True).reset_index(drop=True)
+            df_opp.index = df_opp.index + 1
+
+            st.success(f"Computed opponent averages for {len(df_opp)} teams.")
+            st.dataframe(df_opp, use_container_width=True)
+
+            # Optional: visualize
+            st.markdown("### 🧮 Defensive Heatmap")
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.barh(df_opp["OPP"], df_opp[f"Avg {stat} Allowed"], color="#00c896", alpha=0.8)
+            ax.invert_yaxis()
+            ax.set_xlabel(f"Average {STAT_LABELS.get(stat, stat)} Allowed")
+            ax.set_ylabel("Opponent Team")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            st.pyplot(fig, use_container_width=True)
+
