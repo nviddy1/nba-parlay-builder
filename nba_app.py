@@ -143,23 +143,6 @@ STAT_TOKENS = {
     "PRA": "PRA"
 }
 
-NBA_CUP_DATES = pd.to_datetime([
-    # 2023-24 NBA Cup
-    "2023-11-03","2023-11-10","2023-11-14","2023-11-17",
-    "2023-11-21","2023-11-24","2023-11-28",
-    "2023-12-04","2023-12-05","2023-12-07","2023-12-09",
-
-    # 2024-25 NBA Cup
-    "2024-11-12","2024-11-15","2024-11-19","2024-11-22",
-    "2024-11-26","2024-11-29","2024-12-03",
-    "2024-12-10","2024-12-11","2024-12-14","2024-12-17",
-
-    # 2025-26 NBA Cup
-    "2025-10-31","2025-11-07","2025-11-14","2025-11-21",
-    "2025-11-25","2025-11-26","2025-11-28",
-    "2025-12-09","2025-12-10","2025-12-13","2025-12-16",
-])
-
 @st.cache_data
 def get_all_player_names():
     try:
@@ -447,7 +430,9 @@ def sparkline(values, thr):
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
+tab_builder, tab_breakeven, tab_defense = st.tabs(
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🛡️ Defensive Matrix"]
+)
 
 # =========================
 # TAB 1: PARLAY BUILDER
@@ -586,6 +571,7 @@ with tab_builder:
             elif loc == "Away":
                 d = d[d["MATCHUP"].astype(str).str.contains("@")]
 
+            # NBA Cup filter
             if nba_cup_only:
                 d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
 
@@ -728,6 +714,7 @@ with tab_builder:
                     ax.set_xlabel("")
 
                     st.pyplot(fig, use_container_width=True)
+# ===== End Parlay Tab =====
 
 
 # =========================
@@ -835,3 +822,161 @@ with tab_breakeven:
                     })
 
                 st.table(pd.DataFrame(rows).set_index("Stat"))
+
+# =========================
+# TAB 3: DEFENSIVE MATRIX
+# =========================
+with tab_defense:
+    st.subheader("🛡️ Defensive Matchup Finder")
+
+    # ---- FILTERS (Same as breakeven) ----
+    f1, f2 = st.columns([1.2, 1])
+    with f1:
+        seasons_d = st.multiselect(
+            "Seasons",
+            ["2025-26","2024-25","2023-24","2022-23"],
+            default=["2025-26","2024-25"],
+            key="seasons_defense"
+        )
+        include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="def_playoffs")
+        only_playoffs_d = st.checkbox("Only Playoffs", value=False, key="def_only_playoffs")
+        nba_cup_only_d = st.checkbox("NBA Cup Games Only", key="cup_only_def")
+
+    cA, cB, cC, cD = st.columns([2,1,1,1])
+    with cA:
+        pass  # no player input; defensive matrix only
+    with cB:
+        last_n_d = st.slider("Last N", 5, 100, 20, 1, key="def_lastn")
+    with cC:
+        min_min_d = st.slider("Min Min", 0, 40, 20, 1, key="def_minmin")
+    with cD:
+        loc_choice_d = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="def_loc")
+
+    # ---- POSITION + STAT INPUT UI ----
+    st.markdown("### 📍 Find Best/Worst Matchups")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        matchup_type = st.selectbox("Type", ["Best Matchups", "Worst Matchups"])
+    with c2:
+        pos_choice = st.selectbox("Position", ["PG","SG","SF","PF","C"])
+    with c3:
+        stat_choice = st.selectbox("Stat", ["PTS","REB","AST","STL","BLK","P+R","P+A","PRA"])
+
+    go = st.button("Search Matchups")
+
+    # ---- HELPER: Get Player Position ----
+    from nba_api.stats.endpoints import commonplayerinfo
+
+    @st.cache_data
+    def get_position(player_id):
+        try:
+            info = commonplayerinfo.CommonPlayerInfo(player_id=player_id).get_data_frames()[0]
+            pos = info.get("POSITION", [""])[0]
+            return pos[:2].upper()
+        except:
+            return ""
+
+    # ---- BUILD DEFENSE TABLE ----
+    TEAM_POS = []
+    from nba_api.stats.static import teams
+    TEAM_LIST = sorted([t["full_name"] for t in teams.get_teams()])
+
+    stat_map = {
+        "PTS": "PTS",
+        "REB": "REB",
+        "AST": "AST",
+        "STL": "STL",
+        "BLK": "BLK",
+        "P+R": ["PTS","REB"],
+        "P+A": ["PTS","AST"],
+        "PRA": ["PTS","REB","AST"],
+    }
+
+    @st.cache_data(show_spinner=False)
+    def compute_defense_matrix(seasons, include_po, only_po):
+        data = []
+        for p in players.get_active_players():
+            pid = p["id"]
+            pos = get_position(pid)
+            if pos not in ["PG","SG","SF","PF","C"]:
+                continue
+
+            df = fetch_gamelog(pid, seasons, include_po, only_po)
+            if df.empty:
+                continue
+
+            df["POS"] = pos
+            data.append(df)
+
+        if not data:
+            return pd.DataFrame()
+
+        alldata = pd.concat(data)
+
+        return alldata
+
+    df_all = compute_defense_matrix(seasons_d, include_playoffs_d, only_playoffs_d)
+
+    if go:
+        d = df_all.copy()
+        d = d[d["MIN_NUM"] >= min_min_d]
+        d = d[d["POS"] == pos_choice]
+
+        if loc_choice_d == "Home Only":
+            d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+        elif loc_choice_d == "Away":
+            d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
+
+        if nba_cup_only_d:
+            d = d[d["GAME_DATE_DT"].isin(NBA_CUP_DATES)]
+
+        d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_d)
+
+        results = []
+        for team in d["TEAM_ID"].unique():
+            opp = d[d["TEAM_ID"] == team]
+
+            if isinstance(stat_map[stat_choice], list):
+                val = opp[stat_map[stat_choice]].sum(axis=1).mean()
+            else:
+                val = opp[stat_map[stat_choice]].mean()
+
+            results.append((team, val))
+
+        res_df = pd.DataFrame(results, columns=["TEAM_ID","AVG"])
+        res_df = res_df.dropna().sort_values("AVG", ascending=(matchup_type=="Best Matchups")).head(3)
+
+        st.markdown("### 🎯 Top Matchups")
+        for _, row in res_df.iterrows():
+            tid = int(row["TEAM_ID"])
+            logo = f"https://cdn.nba.com/logos/nba/{tid}/global/L/logo.svg"
+            st.markdown(
+                f"""
+                <div class="card neutral">
+                <h2><img src="{logo}" width="36" style="margin-right:8px;vertical-align:middle;"> 
+                {row['AVG']:.2f} {stat_choice} allowed vs {pos_choice}</h2>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    # ---- FULL MATRIX BELOW ----
+    st.markdown("### 📊 Full Defensive Matrix")
+    if not df_all.empty:
+        mat = []
+        for team in df_all["TEAM_ID"].unique():
+            for pos in ["PG","SG","SF","PF","C"]:
+                sub = df_all[(df_all["TEAM_ID"] == team) & (df_all["POS"] == pos)]
+                if sub.empty:
+                    continue
+                row = {"TEAM_ID": team, "POS": pos}
+                for stat in ["PTS","REB","AST","STL","BLK"]:
+                    row[stat] = sub[stat].mean()
+                row["P+R"] = (sub["PTS"] + sub["REB"]).mean()
+                row["P+A"] = (sub["PTS"] + sub["AST"]).mean()
+                row["PRA"] = (sub["PTS"] + sub["REB"] + sub["AST"]).mean()
+                mat.append(row)
+
+        st.dataframe(pd.DataFrame(mat))
+
