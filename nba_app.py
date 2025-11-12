@@ -836,7 +836,7 @@ with tab_breakeven:
 # TAB 3: DEFENSIVE MATRIX
 # =========================
 with tab_defense:
-    st.subheader("🧱 Defensive Matrix — Defense vs. Position")
+    st.subheader("🧱 Defensive Matrix — Defense vs. Position (Per 30 Minutes)")
 
     # --- Controls
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -855,61 +855,95 @@ with tab_defense:
     include_playoffs_d = st.checkbox("Include Playoffs", value=False, key="dm_playoffs")
 
     if st.button("Compute Defensive Matrix", key="dm_compute"):
-        st.write("⏳ Fetching data for position-based defense — may take ~30s...")
+        st.write("⏳ Computing per-30-minute defensive averages — please wait...")
 
-        # Rough position → player mapping via NBA API
-        # (nba_api doesn't give positions directly; this is a placeholder mapping)
-        # You can replace this with a static CSV or player-position dictionary
         all_p = players.get_active_players()
         df_all = []
-        for p in all_p[:100]:  # limit for demo speed
+
+        for p in all_p[:120]:  # limit for performance
             try:
                 pid = p["id"]
                 name = p["full_name"]
-                # Quick heuristic: assign position by name or fallback random
-                # In production, replace with your own player → position lookup
-                pos_guess = np.random.choice(["PG","SG","SF","PF","C"])
+
+                # TEMP: random position assignment (replace with real mapping later)
+                pos_guess = np.random.choice(["PG", "SG", "SF", "PF", "C"])
                 if pos_guess != position:
                     continue
+
                 logs = fetch_gamelog(pid, seasons_d, include_playoffs_d)
-                if logs.empty:
+                if logs.empty or "MIN_NUM" not in logs:
                     continue
-                logs["OPP"] = logs["MATCHUP"].str.extract(r"vs\. (\w+)|@ (\w+)").bfill(axis=1).iloc[:,0]
+
+                logs["OPP"] = logs["MATCHUP"].str.extract(r"vs\. (\w+)|@ (\w+)").bfill(axis=1).iloc[:, 0]
+                if logs["OPP"].isna().all():
+                    continue
+
+                ser = compute_stat_series(logs, stat_choice)
+                logs["PER30"] = ser / logs["MIN_NUM"].replace(0, np.nan) * 30.0
+                logs = logs.dropna(subset=["PER30"])
+
                 logs["PLAYER"] = name
-                df_all.append(logs[["PLAYER","OPP",stat_choice]])
+                df_all.append(logs[["PLAYER", "OPP", "PER30"]])
             except Exception:
                 continue
 
         if not df_all:
-            st.warning("No data found — try a different season or position.")
+            st.warning("No data found — try another season or position.")
         else:
             df_all = pd.concat(df_all, ignore_index=True)
+
             df_summary = (
-                df_all.groupby("OPP")[stat_choice]
+                df_all.groupby("OPP")["PER30"]
                 .mean()
                 .reset_index()
-                .rename(columns={stat_choice: f"Avg {stat_choice} Allowed to {position}"})
+                .rename(columns={"PER30": f"{stat_choice} Allowed per 30m to {position}s"})
             )
-            df_summary = df_summary.sort_values(f"Avg {stat_choice} Allowed to {position}", ascending=False)
 
-            # --- Top 5 / Bottom 5
-            st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
-            st.table(df_summary.head(5).set_index("OPP"))
+            df_summary[f"{stat_choice} Allowed per 30m to {position}s"] = (
+                df_summary[f"{stat_choice} Allowed per 30m to {position}s"].round(1)
+            )
 
-            st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
-            st.table(df_summary.tail(5).set_index("OPP"))
+            df_summary = df_summary.sort_values(f"{stat_choice} Allowed per 30m to {position}s", ascending=False)
 
-            # --- Matrix Heatmap
+            # --- Side-by-side Top 5 and Bottom 5
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
+                top5 = df_summary.head(5).reset_index(drop=True)
+                st.dataframe(top5.style.format({f"{stat_choice} Allowed per 30m to {position}s": "{:.1f}"}), use_container_width=True)
+            with c2:
+                st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
+                bot5 = df_summary.tail(5).reset_index(drop=True)
+                st.dataframe(bot5.style.format({f"{stat_choice} Allowed per 30m to {position}s": "{:.1f}"}), use_container_width=True)
+
+            # --- Team Color Coding
+            TEAM_COLORS = {
+                "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#000000", "CHA": "#1D1160",
+                "CHI": "#CE1141", "CLE": "#860038", "DAL": "#00538C", "DEN": "#0E2240",
+                "DET": "#C8102E", "GSW": "#1D428A", "HOU": "#CE1141", "IND": "#002D62",
+                "LAC": "#C8102E", "LAL": "#552583", "MEM": "#5D76A9", "MIA": "#98002E",
+                "MIL": "#00471B", "MIN": "#0C2340", "NOP": "#0C2340", "NYK": "#F58426",
+                "OKC": "#007AC1", "ORL": "#0077C0", "PHI": "#006BB6", "PHX": "#1D1160",
+                "POR": "#E03A3E", "SAC": "#5A2D81", "SAS": "#C4CED4", "TOR": "#CE1141",
+                "UTA": "#002B5C", "WAS": "#002B5C"
+            }
+
+            df_summary["COLOR"] = df_summary["OPP"].map(TEAM_COLORS).fillna("#00c896")
+
+            # --- Matrix Bar Chart (Team Colors)
             st.markdown("### 📊 Full Defensive Matrix")
-            fig, ax = plt.subplots(figsize=(8, 5))
+            df_plot = df_summary.sort_values(f"{stat_choice} Allowed per 30m to {position}s", ascending=True)
+
+            fig, ax = plt.subplots(figsize=(8, 6))
             ax.barh(
-                df_summary["OPP"],
-                df_summary[f"Avg {stat_choice} Allowed to {position}"],
-                color="#00c896",
-                alpha=0.8,
+                df_plot["OPP"],
+                df_plot[f"{stat_choice} Allowed per 30m to {position}s"],
+                color=df_plot["COLOR"],
+                edgecolor="none"
             )
-            ax.invert_yaxis()
-            ax.set_xlabel(f"Average {STAT_LABELS.get(stat_choice, stat_choice)} Allowed")
+            ax.set_xlabel(f"Avg {STAT_LABELS.get(stat_choice, stat_choice)} per 30m Allowed to {position}s")
             ax.set_ylabel("Opponent Team")
             ax.grid(alpha=0.3, linestyle="--")
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#444")
             st.pyplot(fig, use_container_width=True)
