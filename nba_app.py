@@ -8,8 +8,6 @@ from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
-from scipy.stats import gamma
-
 
 # =========================
 # PAGE CONFIG
@@ -974,101 +972,213 @@ with tab_breakeven:
 # =========================
 # TAB 3: MONTE CARLO PROP SIMULATOR
 # =========================
-with tab_mc:
-    st.subheader("🎲 Monte Carlo Prop Simulator")
+with tab_injury:
+    st.subheader("🩹 Injury Impact Analyzer")
 
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        mc_text = st.text_input(
-            "Prop (e.g., 'Maxey O 24.5 PTS Away')",
-            key="mc_input",
-            placeholder="Player O/U Line Stat ..."
+    colL, colR = st.columns([1.2, 2])
+
+    # -------------------------------------------------------
+    # LEFT PANEL — CONTROLS
+    # -------------------------------------------------------
+    with colL:
+        season_inj = st.selectbox(
+            "Season",
+            ["2025-26","2024-25","2023-24"],
+            index=1
         )
-        seasons_mc = st.multiselect(
-            "Seasons",
-            ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2025-26","2024-25"],
-            key="seasons_mc"
-        )
-        last_n_mc = st.slider("Last N Games", 5, 100, 20, 1, key="lastn_mc")
-        min_min_mc = st.slider("Min Minutes", 0, 40, 20, 1, key="min_mc")
-        loc_mc = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="loc_mc")
 
-    with c2:
-        odds_mc = st.number_input("Sportsbook Odds (e.g., -110)", value=-110, step=5, key="odds_mc")
-        sims_mc = st.slider("Number of Simulations", 1000, 20000, 10000, 1000, key="sims_mc")
+        team_inj = st.selectbox("Team", TEAM_ABBRS)
 
-    if st.button("Run Simulation", key="run_mc") and mc_text.strip():
-        parsed = parse_input_line(mc_text)
-        if not parsed or not parsed["player"]:
-            st.warning("Could not parse player / stat from input.")
+        roster_df = get_team_roster(season_inj, team_inj)
+
+        if roster_df.empty:
+            st.warning("Could not load roster for this team/season.")
+            injured_name = None
+            injured_id = None
         else:
-            pid = get_player_id(parsed["player"])
-            if not pid:
-                st.warning("Could not find that player in the NBA database.")
-            else:
-                df = fetch_gamelog(pid, seasons_mc, include_playoffs=False, only_playoffs=False)
-                d = df.copy()
-                d = d[d["MIN_NUM"] >= min_min_mc]
-                if loc_mc == "Home Only":
-                    d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
-                elif loc_mc == "Away":
-                    d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-                d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
+            injured_name = st.selectbox(
+                "Injured / Missing Player",
+                roster_df["PLAYER"].tolist()
+            )
+            injured_id = int(
+                roster_df.loc[
+                    roster_df["PLAYER"] == injured_name, "PLAYER_ID"
+                ].iloc[0]
+            )
 
-                ser = compute_stat_series(d, parsed["stat"])
-                draws = monte_carlo_predictive(ser, n_sims=sims_mc)
-                if draws.size == 0:
-                    st.warning("No valid stat data to simulate from.")
-                else:
-                    thr = parsed["thr"]
-                    direction = parsed["dir"]
-                    if direction == "Under":
-                        p_hit = float((draws <= thr).mean())
+        stat_inj = st.selectbox("Stat", ["PTS","REB","AST","PRA"], index=0)
+
+        min_games_without = st.slider(
+            "Min games without to include",
+            1, 15, 3
+        )
+
+        run_inj = st.button("Analyze Impact")
+
+
+    # -------------------------------------------------------
+    # RIGHT PANEL — RESULTS
+    # -------------------------------------------------------
+    with colR:
+        if run_inj:
+
+            if not injured_name or injured_id is None:
+                st.warning("Select an injured player first.")
+                st.stop()
+
+            logs = get_league_player_logs(season_inj)
+            team_logs = logs[logs["TEAM_ABBREVIATION"] == team_inj].copy()
+
+            if team_logs.empty:
+                st.warning("No logs for this team/season.")
+                st.stop()
+
+            # Build PRA if needed
+            if stat_inj == "PRA":
+                team_logs["PRA"] = (
+                    team_logs["PTS"].fillna(0)
+                    + team_logs["REB"].fillna(0)
+                    + team_logs["AST"].fillna(0)
+                )
+
+            # Games WITH the injured player
+            inj_logs = team_logs[team_logs["PLAYER_ID"] == injured_id]
+            games_with = set(inj_logs["GAME_ID"].unique())
+
+            # Games WITHOUT him
+            all_games = set(team_logs["GAME_ID"].unique())
+            games_without = all_games - games_with
+
+            if not games_without:
+                st.warning(f"No games where {injured_name} was OUT.")
+                st.stop()
+
+            # Player/teammate logs WITH and WITHOUT
+            with_df = team_logs[
+                (team_logs["GAME_ID"].isin(games_with)) &
+                (team_logs["PLAYER_ID"] != injured_id)
+            ].copy()
+
+            without_df = team_logs[
+                (team_logs["GAME_ID"].isin(games_without)) &
+                (team_logs["PLAYER_ID"] != injured_id)
+            ].copy()
+
+            stat_col = stat_inj
+
+            # -----------------------------
+            # True Predictive Means (NO SCIPY)
+            # -----------------------------
+            # Uses a Gaussian kernel-smoothed estimate
+            def predictive_mean(vals):
+                v = pd.to_numeric(vals, errors="coerce").dropna().values
+                if len(v) == 0:
+                    return np.nan
+                std = np.std(v)
+                if std == 0:
+                    return float(v.mean())
+                # Gaussian kernel weights
+                diffs = v[:, None] - v[None, :]
+                weights = np.exp(-(diffs ** 2) / (2 * (std ** 2)))
+                weights /= weights.sum(axis=1, keepdims=True)
+                smooth = (weights * v).sum(axis=1)
+                return float(smooth.mean())
+
+            g_with = with_df.groupby("PLAYER_ID")[stat_col].apply(predictive_mean)
+            g_without = without_df.groupby("PLAYER_ID")[stat_col].apply(predictive_mean)
+            n_without = without_df.groupby("PLAYER_ID")["GAME_ID"].nunique()
+
+            rows = []
+            idx = sorted(set(g_with.index) | set(g_without.index))
+
+            for pid in idx:
+                w = g_with.get(pid, np.nan)
+                wo = g_without.get(pid, np.nan)
+                nwo = int(n_without.get(pid, 0))
+
+                if nwo < min_games_without:
+                    continue
+
+                delta = wo - w
+                name = roster_df.loc[roster_df["PLAYER_ID"] == pid, "PLAYER"]
+                name = name.iloc[0] if not name.empty else str(pid)
+
+                rows.append({
+                    "Player": name,
+                    f"{stat_col} w/ {injured_name}": w,
+                    f"{stat_col} w/o {injured_name}": wo,
+                    "Games w/o": nwo,
+                    "Delta": delta
+                })
+
+            if not rows:
+                st.warning("Not enough data for any teammate.")
+                st.stop()
+
+            impact_df = pd.DataFrame(rows)
+            impact_df = impact_df.sort_values("Delta", ascending=False)
+
+
+            # -----------------------------
+            # HTML STYLED TABLE
+            # -----------------------------
+            def delta_color(x):
+                if x > 0:
+                    return "color:#7CFCBE; font-weight:700;"
+                if x < 0:
+                    return "color:#FF6B6B; font-weight:700;"
+                return "color:#e5e7eb;"
+
+            html = """
+            <style>
+                table.custom-impact {
+                    border-collapse: collapse;
+                    width: 100%;
+                    margin-top: 10px;
+                    border-radius: 10px;
+                    overflow: hidden;
+                }
+                table.custom-impact th {
+                    background-color: #1f2125;
+                    padding: 10px;
+                    color: #f9fafb;
+                    font-size: 0.9rem;
+                    border-bottom: 1px solid #333;
+                }
+                table.custom-impact td {
+                    background-color: #131417;
+                    padding: 8px 10px;
+                    color: #e5e7eb;
+                    border-bottom: 1px solid #222;
+                    font-size: 0.9rem;
+                }
+            </style>
+            <table class="custom-impact">
+                <thead><tr>
+            """
+
+            for col in impact_df.columns:
+                html += f"<th>{col}</th>"
+            html += "</tr></thead><tbody>"
+
+            for _, row in impact_df.iterrows():
+                html += "<tr>"
+                for col in impact_df.columns:
+                    val = row[col]
+                    if col == "Delta":
+                        html += f"<td style='{delta_color(val)}'>{val:+.1f}</td>"
+                    elif isinstance(val, float):
+                        html += f"<td>{val:.1f}</td>"
                     else:
-                        p_hit = float((draws >= thr).mean())
+                        html += f"<td>{val}</td>"
+                html += "</tr>"
 
-                    fair_odds = prob_to_american(p_hit)
-                    book_prob = american_to_implied(odds_mc)
-                    ev_pct = None
-                    if book_prob is not None:
-                        ev_pct = (p_hit - book_prob) * 100.0
+            html += "</tbody></table>"
 
-                    stat_label = STAT_LABELS.get(parsed["stat"], parsed["stat"])
-                    dir_short = "O" if direction == "Over" else "U"
-                    hit_str = f"{p_hit*100:.1f}%"
-                    ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
-
-                    cls = "neutral"
-                    if ev_pct is not None:
-                        cls = "pos" if ev_pct >= 0 else "neg"
-
-                    st.markdown(f"""
-<div class="card {cls}">
-  <h2>🎲 Monte Carlo Result</h2>
-  <div class="cond">
-    {parsed["player"]} — {dir_short} {fmt_half(thr)} {stat_label} ({loc_mc}, last {last_n_mc} games)
-  </div>
-  <div class="row">
-    <div class="m"><div class="lab">Sim Hit Probability</div><div class="val">{hit_str}</div></div>
-    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{fair_odds}</div></div>
-    <div class="m"><div class="lab">Book Odds</div><div class="val">{odds_mc}</div></div>
-    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_str}</div></div>
-  </div>
-  <div style="margin-top:10px;">
-    <span class="chip">{('🔥 +EV (Monte Carlo)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV by simulation')}</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-                    # Histogram
-                    fig, ax = plt.subplots(figsize=(6, 3))
-                    ax.hist(draws, bins=20, alpha=0.85)
-                    ax.axvline(thr, color="red", linestyle="--", linewidth=1.5)
-                    ax.set_xlabel(stat_label)
-                    ax.set_ylabel("Simulated frequency")
-                    st.pyplot(fig, use_container_width=True)
-
+            st.caption(
+                f"Positive Delta = teammate gains production when **{injured_name}** is OUT."
+            )
+            st.markdown(html, unsafe_allow_html=True)
 
 # =========================
 # TAB 4: INJURY IMPACT ANALYZER
