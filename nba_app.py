@@ -799,7 +799,7 @@ with tab_builder:
         seasons = st.multiselect(
             "Seasons",
             ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2025-26","2024-25"],
+            default=["2025-26"],
             key="seasons_builder"
         )
         include_playoffs = st.checkbox("Include Playoffs", value=False, key="pb_playoffs")
@@ -1070,7 +1070,7 @@ with tab_breakeven:
         seasons_b = st.multiselect(
             "Seasons",
             ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2025-26","2024-25"],
+            default=["2025-26"],
             key="seasons_breakeven"
         )
         include_playoffs_b = st.checkbox("Include Playoffs", value=False, key="be_playoffs")
