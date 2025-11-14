@@ -13,42 +13,52 @@ from datetime import datetime
 
 @st.cache_data(ttl=300)
 def get_espn_games(date_str):
-    """Return ESPN-style scoreboard data for a given YYYY-MM-DD date."""
+    """Return ESPN-style scoreboard data for a given YYYYMMDD date."""
     url = f"https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/scoreboard?dates={date_str}"
+
     r = requests.get(url, timeout=10)
-    
     if r.status_code != 200:
         return []
 
-    data = r.json().get("events", [])
+    data = r.json()
+
+    events = data.get("events", [])
     games = []
 
-    for ev in data:
-        comp = ev["competitions"][0]
+    for ev in events:
+        # Follow event link
+        ev_data = requests.get(ev.get("$ref")).json()
+        comp = ev_data["competitions"][0]
+
         status = comp["status"]["type"]["shortDetail"]
         game_time = comp["status"]["type"]["detail"]
 
-        team1 = comp["competitors"][0]
-        team2 = comp["competitors"][1]
+        competitors = comp["competitors"]
 
         def parse_team(t):
-            logo = t["team"].get("logo") or t["team"].get("logos", [{}])[0].get("href")
+            team_info = requests.get(t["team"]["$ref"]).json()
+            logo = team_info.get("logos", [{}])[0].get("href")
+
             return {
-                "abbr": t["team"]["abbreviation"],
-                "record": t["records"][0]["summary"] if t.get("records") else "",
+                "abbr": team_info.get("abbreviation", ""),
+                "record": t.get("records", [{}])[0].get("summary", ""),
                 "logo": logo,
                 "score": t.get("score"),
-                "homeAway": t["homeAway"]
+                "homeAway": t.get("homeAway"),
             }
+
+        team1 = parse_team(competitors[0])
+        team2 = parse_team(competitors[1])
 
         games.append({
             "time": game_time,
             "status": status,
-            "team1": parse_team(team1),
-            "team2": parse_team(team2)
+            "team1": team1,
+            "team2": team2
         })
 
     return games
+
 
 
 # =========================
