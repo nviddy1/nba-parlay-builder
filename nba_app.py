@@ -202,8 +202,8 @@ def render_espn_banner(scoreboard):
 # =========================
 # PAGE CONFIG
 # =========================
-st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
-st.markdown("🏀 NBA Player Prop Tools")
+st.set_page_config(page_icon="🏀", layout="wide")
+st.markdown("🏀 NBA Betting Tool")
 
 # --- Hardcoded to current day ---
 today = datetime.now().date()
