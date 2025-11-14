@@ -8,6 +8,7 @@ from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
+from scipy.stats import gamma
 
 
 # =========================
@@ -578,12 +579,23 @@ def style_def_table(df: pd.DataFrame, stat_col: str):
     )
 
 
-def monte_carlo_sim(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
-    """Bootstrap Monte Carlo from historical stat series."""
+def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000):
+    """
+    True predictive Monte Carlo using a fitted Gamma distribution.
+    Much more realistic than bootstrap.
+    """
     vals = pd.to_numeric(series, errors="coerce").dropna().values
     if len(vals) == 0:
         return np.array([])
-    return np.random.choice(vals, size=n_sims, replace=True)
+
+    # Fit gamma distribution to the empirical values
+    # a = shape, loc = location (close to 0), scale = rate
+    a, loc, scale = gamma.fit(vals, floc=0)  # force loc=0 for stability
+
+    # Generate smooth predictive samples
+    sims = gamma(a, loc=loc, scale=scale).rvs(size=n_sims)
+
+    return sims
 
 
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
@@ -1005,7 +1017,7 @@ with tab_mc:
                 d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
 
                 ser = compute_stat_series(d, parsed["stat"])
-                draws = monte_carlo_sim(ser, n_sims=sims_mc)
+                draws = monte_carlo_predictive(ser, n_sims=sims_mc)
                 if draws.size == 0:
                     st.warning("No valid stat data to simulate from.")
                 else:
