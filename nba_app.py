@@ -1164,8 +1164,8 @@ with tab_mc:
     # ---- Filters ----
     seasons_mc = st.multiselect(
         "Seasons",
-        ["2024-25","2023-24","2022-23","2021-22"],
-        default=["2024-25","2023-24"]
+        ["2025-26", "2024-25","2023-24","2022-23","2021-22"],
+        default=["2025-26"]
     )
     last_n_mc = st.slider("Last N Games", 5, 100, 20)
     min_min_mc = st.slider("Min Minutes", 0, 40, 20)
