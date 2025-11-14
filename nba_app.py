@@ -1718,10 +1718,13 @@ with tab_injury:
             )
             st.markdown(html, unsafe_allow_html=True)
 
+# =========================
+# TAB 5: MATCHUP EXPLOITER
+# =========================
 
             
 # =========================
-# TAB 5: TEAM DEFENSE
+# TAB 6: TEAM DEFENSE
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
