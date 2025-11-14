@@ -21,9 +21,22 @@ def get_espn_scoreboard(date):
         return None
     return r.json()
 
-def render_espn_banner(scoreboard, chosen_date_str):
-    if not scoreboard or "events" not in scoreboard:
-        st.warning("No games found for this date.")
+def combine_scoreboards(dates):
+    """Combine games from multiple dates into one list, sorted by time."""
+    all_events = []
+    for date in dates:
+        sb = get_espn_scoreboard(date)
+        if sb and "events" in sb:
+            for event in sb["events"]:
+                event["date_str"] = date  # For sorting/grouping if needed
+                all_events.append(event)
+    # Sort by start time
+    all_events.sort(key=lambda e: datetime.fromisoformat(e["date"].replace("Z", "+00:00")))
+    return {"events": all_events}
+
+def render_espn_banner(combined_sb, date_range_str):
+    if not combined_sb or "events" not in combined_sb or not combined_sb["events"]:
+        st.warning("No games found for these dates.")
         return
     st.markdown(
         """
@@ -48,18 +61,9 @@ def render_espn_banner(scoreboard, chosen_date_str):
             border: 1px solid #333;
             min-width: 120px;
             margin-right: 0;
-        }
-        .date-filter select {
-            background: none;
-            border: none;
             color: #fff;
             font-size: 14px;
-            text-align: center;
-            cursor: pointer;
-        }
-        .date-filter option {
-            background: #333;
-            color: #fff;
+            font-weight: bold;
         }
         .espn-game-card {
             flex: 0 0 auto;
@@ -124,18 +128,14 @@ def render_espn_banner(scoreboard, chosen_date_str):
     )
     html = '<div class="espn-banner-container">'
     
-    # Date filter as first "card"
-    current_date_obj = datetime.strptime(chosen_date_str, '%Y%m%d')
-    date_display = current_date_obj.strftime("%b %d")
+    # Date filter as first "card" – now static range
     html += f"""
     <div class="date-filter">
-        <select onchange="this.form.submit()">
-            <option selected>{date_display}</option>
-        </select>
+        {date_range_str}
     </div>
     """
     
-    events = scoreboard["events"]
+    events = combined_sb["events"]
     for i, game in enumerate(events):
         try:
             comp = game["competitions"][0]
@@ -212,29 +212,21 @@ def render_espn_banner(scoreboard, chosen_date_str):
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.markdown("🏀 NBA Player Prop Tools")
 
-# --- ESPN Date Selector ---
+# --- Date Range (fixed to today + next 2 days) ---
 today = datetime.now().date()
-dates = {
-    "Today": today,
-    "Tomorrow": today + timedelta(days=1),
-    "In 2 Days": today + timedelta(days=2),
-}
-chosen_label = st.selectbox(
-    "Games",
-    list(dates.keys()),
-    index=0,
-)
-chosen_date = dates[chosen_label].strftime("%Y%m%d")
+date_range = [today, today + timedelta(days=1), today + timedelta(days=2)]
+dates_str = [d.strftime("%Y%m%d") for d in date_range]
+date_range_display = f"{today.strftime('%b %d')}–{(today + timedelta(days=2)).strftime('%b %d')}"
 
-# --- Fetch ESPN games ---
-@st.cache_data(ttl=300)  # Cache for 5 min to avoid API hammering
-def fetch_scoreboard_cached(date_str):
-    return get_espn_scoreboard(date_str)
+# --- Fetch and combine games ---
+@st.cache_data(ttl=300)  # Cache for 5 min
+def fetch_combined_scoreboard(date_strs):
+    return combine_scoreboards(date_strs)
 
-scoreboard = fetch_scoreboard_cached(chosen_date)
+combined_sb = fetch_combined_scoreboard(dates_str)
 
 # --- Render banner ---
-render_espn_banner(scoreboard, chosen_date)
+render_espn_banner(combined_sb, date_range_display)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
