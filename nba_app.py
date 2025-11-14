@@ -10,40 +10,46 @@ from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 from datetime import datetime
-import pytz
 
-def get_today_games(date=None):
-    """Scrape ESPN scoreboard for a given date (defaults to today)."""
-    if date is None:
-        date = datetime.now().strftime("%Y%m%d")
+@st.cache_data(ttl=300)
+def get_espn_games(date_str):
+    """Return ESPN-style scoreboard data for a given YYYY-MM-DD date."""
+    url = f"https://site.web.api.espn.com/apis/v2/sports/basketball/nba/scoreboard?dates={date_str}"
+    r = requests.get(url, timeout=10)
+    
+    if r.status_code != 200:
+        return []
 
-    url = f"https://site.web.api.espn.com/apis/v2/sports/basketball/nba/scoreboard?dates={date}"
-    data = requests.get(url).json()
-
+    data = r.json().get("events", [])
     games = []
-    eastern = pytz.timezone("US/Eastern")
-    local_tz = pytz.timezone("US/Eastern")  # change if needed
 
-    for ev in data.get("events", []):
+    for ev in data:
         comp = ev["competitions"][0]
+        status = comp["status"]["type"]["shortDetail"]
+        game_time = comp["status"]["type"]["detail"]
 
-        # Time conversion
-        utc_time = datetime.fromisoformat(comp["date"].replace("Z", "+00:00"))
-        et_time = utc_time.astimezone(eastern)
-        display_time = et_time.strftime("%-I:%M %p")
+        team1 = comp["competitors"][0]
+        team2 = comp["competitors"][1]
 
-        home = comp["competitors"][0]
-        away = comp["competitors"][1]
+        def parse_team(t):
+            logo = t["team"].get("logo") or t["team"].get("logos", [{}])[0].get("href")
+            return {
+                "abbr": t["team"]["abbreviation"],
+                "record": t["records"][0]["summary"] if t.get("records") else "",
+                "logo": logo,
+                "score": t.get("score"),
+                "homeAway": t["homeAway"]
+            }
 
         games.append({
-            "time": display_time,
-            "home": home["team"]["abbreviation"],
-            "home_logo": home["team"]["logo"],
-            "away": away["team"]["abbreviation"],
-            "away_logo": away["team"]["logo"],
+            "time": game_time,
+            "status": status,
+            "team1": parse_team(team1),
+            "team2": parse_team(team2)
         })
 
     return games
+
 
 # =========================
 # PAGE CONFIG
@@ -51,70 +57,52 @@ def get_today_games(date=None):
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.title("🏀 NBA Player Prop Tools")
 
-# =========================
-# TODAY'S GAME BANNER
-# =========================
+# --- ESPN STYLE BANNER ---
+st.markdown("### ")
 
-games = get_today_games()
+# Date selector (default = today)
+default_date = datetime.today().strftime("%Y-%m-%d")
+selected_date = st.date_input(
+    "Games for:",
+    value=datetime.strptime(default_date, "%Y-%m-%d"),
+    label_visibility="collapsed"
+)
+date_str = selected_date.strftime("%Y-%m-%d")
 
-if games:
+games_today = get_espn_games(date_str)
+
+if not games_today:
     st.markdown(
-        """
-        <div style="
-            width:100%;
-            overflow-x:auto;
-            white-space:nowrap;
-            padding:12px 0;
-            border-bottom:1px solid #333;
-            background:rgba(255,255,255,0.03);
-        ">
-        """,
-        unsafe_allow_html=True,
+        "<div style='padding: 10px; text-align:center; color:#aaa;'>No NBA games for this date.</div>",
+        unsafe_allow_html=True
     )
-
-    banner_html = ""
-
-    for g in games:
-        time_str = g["tipoff"].replace("T", " ").replace("Z", "")
-
-        banner_html += f"""
-            <span style="
-                display:inline-flex;
-                align-items:center;
-                gap:8px;
-                margin-right:28px;
-                padding:6px 10px;
-                background:rgba(0,0,0,0.25);
-                border-radius:10px;
-                border:1px solid #444;
-            ">
-                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-weight:700;color:#fff;">{g['away']}</span>
-                <span style="opacity:0.6;">@</span>
-                <span style="font-weight:700;color:#fff;">{g['home']}</span>
-                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
-            </span>
-        """
-
-    st.markdown(banner_html, unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
 else:
-    st.markdown(
+    banner_html = "<div class='espn-banner'>"
+
+    for g in games_today:
+        card = f"""
+        <div class='espn-card'>
+            <div style='font-size: 12px; opacity:0.8;'>{g['time']}</div>
+
+            <div class='espn-row'>
+                <div class='espn-team'>
+                    <img src="{g['team1']['logo']}">
+                    <div><b>{g['team1']['abbr']}</b><br><span style='font-size:11px; opacity:0.7;'>{g['team1']['record']}</span></div>
+                </div>
+            </div>
+
+            <div class='espn-row'>
+                <div class='espn-team'>
+                    <img src="{g['team2']['logo']}">
+                    <div><b>{g['team2']['abbr']}</b><br><span style='font-size:11px; opacity:0.7;'>{g['team2']['record']}</span></div>
+                </div>
+            </div>
+        </div>
         """
-        <div style="
-            width:100%;
-            padding:10px 0;
-            border-bottom:1px solid #333;
-            text-align:center;
-            color:#aaa;
-            font-size:0.9rem;
-        ">No NBA games today</div>
-        """,
-        unsafe_allow_html=True,
-    )
+        banner_html += card
+
+    banner_html += "</div>"
+    st.markdown(banner_html, unsafe_allow_html=True)
 
 # =========================
 # THEME / CSS
@@ -244,6 +232,45 @@ tbody td, thead th {
 }
 </style>
 """, unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+.espn-banner {
+    display: flex;
+    overflow-x: auto;
+    gap: 12px;
+    padding: 12px 4px;
+    white-space: nowrap;
+    border-bottom: 1px solid #333;
+}
+.espn-card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    padding: 10px 14px;
+    border-radius: 10px;
+    min-width: 200px;
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.espn-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.espn-team {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.espn-team img {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # =========================
 # CONSTANTS & HELPERS
@@ -872,15 +899,58 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
     return html
 
-
-
-
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
     # Add actual NBA In-Season Tournament dates here, e.g.,
     # "2024-11-12", "2024-11-13", etc.
     # For 2025-26 season, placeholder empty for now
 ])
+
+games = get_today_games()
+
+if games:
+    st.markdown(
+        """
+        <div style="
+            width:100%;
+            overflow-x:auto;
+            white-space:nowrap;
+            padding:12px 0;
+            border-bottom:1px solid #333;
+            background:rgba(255,255,255,0.03);
+        ">
+        """,
+        unsafe_allow_html=True,
+    )
+
+    banner_html = ""
+
+    for g in games:
+        time_str = g.get("time", "")
+
+        banner_html += f"""
+            <span style="
+                display:inline-flex;
+                align-items:center;
+                gap:8px;
+                margin-right:28px;
+                padding:6px 10px;
+                background:rgba(0,0,0,0.25);
+                border-radius:10px;
+                border:1px solid #444;
+            ">
+                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
+                <span style="font-weight:700;color:#fff;">{g['away']}</span>
+                <span style="opacity:0.6;">@</span>
+                <span style="font-weight:700;color:#fff;">{g['home']}</span>
+                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
+                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
+            </span>
+        """
+
+    st.markdown(banner_html, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 # =========================
 # TABS
