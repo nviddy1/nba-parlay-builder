@@ -612,7 +612,7 @@ def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray
     # stats can't go below zero
     return np.clip(draws, 0, None)
 
-def render_result_card(player, direction, thr, stat_label, loc_text, last_n, p_hit, fair_odds, sb_odds, ev_pct):
+def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, p_hit, fair_odds, sb_odds, ev_pct):
     ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
     hit_str = f"{p_hit*100:.1f}%"
     cls = "neutral"
@@ -691,7 +691,7 @@ def render_result_card(player, direction, thr, stat_label, loc_text, last_n, p_h
 </div>
 """
 
-def render_distribution_summary_card(mean_val, median_val, stdev, p10, p90, p_hit):
+def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, p_hit):
     return f"""
 <style>
 .summary-card {{
