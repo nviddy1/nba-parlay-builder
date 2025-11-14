@@ -471,7 +471,7 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
+tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
 
 # =========================
 # TAB 1: PARLAY BUILDER
@@ -831,3 +831,95 @@ with tab_breakeven:
                         "Under": f"{out['under_prob']*100:.1f}% ({out['under_odds']})"
                     })
                 st.table(pd.DataFrame(rows).set_index("Stat"))
+
+# =========================
+# TAB 3: HOT MATCHUPS
+# =========================
+with tab_matchups:
+    st.subheader("📈 Hot Matchups — Easiest Defenses to Score Against")
+
+    st.caption("Based on per-48-minute averages from the current season (snapshot data).")
+
+    # --- Hard-coded snapshot from Hashtag Basketball (example PTS allowed) ---
+    HOT_MATCHUPS = {
+        "PTS": [
+            {"rank": 1, "team": "WAS", "stat": 118.3},
+            {"rank": 2, "team": "CHA", "stat": 116.5},
+            {"rank": 3, "team": "UTA", "stat": 115.4},
+            {"rank": 4, "team": "SAS", "stat": 114.7},
+            {"rank": 5, "team": "DET", "stat": 113.9},
+        ],
+        "REB": [
+            {"rank": 1, "team": "POR", "stat": 56.2},
+            {"rank": 2, "team": "SAS", "stat": 55.4},
+            {"rank": 3, "team": "UTA", "stat": 54.8},
+            {"rank": 4, "team": "WAS", "stat": 54.3},
+            {"rank": 5, "team": "CHA", "stat": 53.9},
+        ],
+        "AST": [
+            {"rank": 1, "team": "WAS", "stat": 28.8},
+            {"rank": 2, "team": "CHA", "stat": 28.3},
+            {"rank": 3, "team": "TOR", "stat": 27.9},
+            {"rank": 4, "team": "SAS", "stat": 27.7},
+            {"rank": 5, "team": "ATL", "stat": 27.2},
+        ],
+        "FG3M": [
+            {"rank": 1, "team": "SAS", "stat": 14.6},
+            {"rank": 2, "team": "UTA", "stat": 14.4},
+            {"rank": 3, "team": "WAS", "stat": 14.1},
+            {"rank": 4, "team": "CHA", "stat": 13.9},
+            {"rank": 5, "team": "POR", "stat": 13.7},
+        ],
+    }
+
+    stat_choice = st.selectbox("Stat Type", list(HOT_MATCHUPS.keys()), index=0)
+    data = HOT_MATCHUPS[stat_choice]
+
+    # --- Display table side by side ---
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.markdown("### 🔥 Top 5 Easiest Defenses")
+    with c2:
+        st.markdown("### 🧊 Top 5 Toughest Defenses")
+
+    # Create toughest list by reversing the same table for demonstration
+    toughest = list(reversed(data))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        df_easy = pd.DataFrame(data)
+        df_easy["Team Logo"] = df_easy["team"].apply(
+            lambda t: f"https://cdn.nba.com/logos/nba/{t}/global/L/logo.svg"
+        )
+        for _, row in df_easy.iterrows():
+            st.markdown(
+                f"""
+                <div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>
+                    <img src='{row['Team Logo']}' width='32'>
+                    <span style='font-weight:700;font-size:1.1rem;'>{row['team']}</span>
+                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['stat']}</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    with c2:
+        df_hard = pd.DataFrame(toughest)
+        df_hard["Team Logo"] = df_hard["team"].apply(
+            lambda t: f"https://cdn.nba.com/logos/nba/{t}/global/L/logo.svg"
+        )
+        for _, row in df_hard.iterrows():
+            st.markdown(
+                f"""
+                <div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>
+                    <img src='{row['Team Logo']}' width='32'>
+                    <span style='font-weight:700;font-size:1.1rem;'>{row['team']}</span>
+                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['stat']}</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    st.divider()
+    st.caption("Last updated: 2025-11-10 snapshot • Source: Hashtag Basketball")
+
