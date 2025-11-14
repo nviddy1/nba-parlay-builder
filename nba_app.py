@@ -908,7 +908,7 @@ NBA_CUP_DATES = pd.to_datetime([
 
 games_today = get_espn_games(date_str)
 
-if games:
+if games_today:
     st.markdown(
         """
         <div style="
@@ -922,34 +922,12 @@ if games:
         """,
         unsafe_allow_html=True,
     )
-
-    banner_html = ""
-
-    for g in games:
-        time_str = g.get("time", "")
-
-        banner_html += f"""
-            <span style="
-                display:inline-flex;
-                align-items:center;
-                gap:8px;
-                margin-right:28px;
-                padding:6px 10px;
-                background:rgba(0,0,0,0.25);
-                border-radius:10px;
-                border:1px solid #444;
-            ">
-                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-weight:700;color:#fff;">{g['away']}</span>
-                <span style="opacity:0.6;">@</span>
-                <span style="font-weight:700;color:#fff;">{g['home']}</span>
-                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
-            </span>
-        """
-
-    st.markdown(banner_html, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    # your banner rendering HTML here
+else:
+    st.markdown(
+        "<div style='padding: 10px; text-align:center; color:#aaa;'>No NBA games for this date.</div>",
+        unsafe_allow_html=True
+    )
 
 
 # =========================
