@@ -1,5 +1,6 @@
 # nba_app.py
 import streamlit as st
+import textwrap
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,13 +9,217 @@ from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
+import requests
+from datetime import datetime, timedelta
+import pytz
 
+def get_espn_scoreboard(date):
+    """Fetch ESPN scoreboard data for a given date (YYYYMMDD)."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    return r.json()
+
+def render_espn_banner(scoreboard):
+    if not scoreboard or "events" not in scoreboard:
+        st.warning("No games found for this date.")
+        return
+    st.markdown(
+        """
+        <style>
+
+        /* --- Title --- */
+        h1, .main-title {
+            font-size: 50px !important;
+            font-weight: 900 !important;
+            margin-bottom: 6px !important;
+        }
+
+        /* --- Banner container --- */
+        .espn-banner-container {
+            display: flex;
+            overflow-x: auto;
+            white-space: nowrap;
+            padding: 6px 0 !important;
+            gap: 10px !important;
+            border-bottom: 1px solid #333;
+        }
+
+        /* --- COMPACT-MEDIUM CARD (slightly wider now) --- */
+        .espn-game-card {
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+
+            background: #1e1e1e;
+            border-radius: 8px !important;
+            border: 1px solid #333;
+
+            padding: 8px 12px !important;
+            min-width: 170px !important;    /* increased from 150 */
+            max-width: 170px !important;
+
+            gap: 4px !important;
+        }
+
+        /* --- Time / TV smaller (2 sizes down) --- */
+        .espn-time {
+            font-size: 11px !important;     /* was 13 */
+            color: #ccc;
+            text-align: center;
+            margin-bottom: 4px !important;
+            line-height: 1.1;
+        }
+        .espn-time .tv {
+            font-size: 9px !important;      /* was 11 → bumped down */
+            color: #ff9900;
+            margin-top: 1px;
+        }
+
+        .espn-matchup {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 2px !important;
+        }
+
+        /* --- Logos --- */
+        .espn-team img {
+            height: 26px !important;
+            width: 26px !important;
+            margin-bottom: 2px !important;
+        }
+
+        .espn-team {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1px !important;
+        }
+
+        .espn-team-abbr {
+            font-size: 14px !important;
+            font-weight: 700 !important;
+            margin-bottom: 1px !important;
+        }
+
+        /* --- Record 1 size bigger --- */
+        .espn-record {
+            font-size: 11px !important;    /* was 10 */
+            color: #888;
+            line-height: 1.05;
+        }
+
+        .espn-at {
+            font-size: 14px !important;
+            font-weight: 700 !important;
+            margin: 0 6px !important;
+            white-space: nowrap;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    html = '<div class="espn-banner-container">'
+    
+    events = scoreboard["events"]
+    for i, game in enumerate(events):
+        try:
+            comp = game["competitions"][0]
+            status = game["status"]["type"]["shortDetail"]
+            t1 = comp["competitors"][0]  # Away
+            t2 = comp["competitors"][1]  # Home
+           
+            def fmt_team(team):
+                team_dict = team["team"]
+                abbr = team_dict.get("abbreviation", "TBD")
+                logo = team_dict.get("logo", f"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{abbr.lower()}.png")
+                record = ""
+                if team.get("records") and len(team["records"]) > 0:
+                    record = team["records"][0].get("summary", "")
+                return abbr, logo, record
+           
+            away_abbr, away_logo, away_record = fmt_team(t1)
+            home_abbr, home_logo, home_record = fmt_team(t2)
+           
+            # Time parsing with fallback
+            try:
+                start_time_str = game["date"].replace("Z", "+00:00")
+                start_time = datetime.fromisoformat(start_time_str)
+                est = start_time.astimezone(pytz.timezone("US/Eastern"))
+                time_str = est.strftime("%-I:%M %p ET")
+            except (ValueError, KeyError):
+                time_str = status or "TBD"
+           
+            # Status override for live/final
+            if status.lower() in ["final", "in progress", "live"]:
+                time_str = status.upper()
+           
+            # TV
+            tv = ""
+            if "broadcasts" in comp and len(comp["broadcasts"]) > 0:
+                tv_networks = []
+                for b in comp["broadcasts"]:
+                    names = b.get("names", [])
+                    if names:
+                        tv_networks.extend(names)
+                if tv_networks:
+                    tv_network = ", ".join(tv_networks[:2])  # First 1-2 networks
+                    tv = f'<div class="tv">{tv_network}</div>'
+           
+            # Build snippet without indentation issues
+            snippet = textwrap.dedent(f"""
+                <div class="espn-game-card">
+                    <div class="espn-time">{time_str}{tv}</div>
+                    <div class="espn-matchup">
+                        <div class="espn-team">
+                            <img src="{away_logo}" alt="{away_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away_abbr.lower()}.png'">
+                            <div class="espn-team-abbr">{away_abbr}</div>
+                            <div class="espn-record">{away_record}</div>
+                        </div>
+                        <div class="espn-at">@</div>
+                        <div class="espn-team">
+                            <img src="{home_logo}" alt="{home_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home_abbr.lower()}.png'">
+                            <div class="espn-team-abbr">{home_abbr}</div>
+                            <div class="espn-record">{home_record}</div>
+                        </div>
+                    </div>
+                </div>
+            """).strip()
+            html += snippet
+        except Exception as e:
+            st.error(f"Error rendering game {i+1} ({game.get('name', 'Unknown')}): {str(e)}")
+            continue
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 # =========================
 # PAGE CONFIG
 # =========================
-st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
-st.title("🏀 NBA Player Prop Tools")
+st.set_page_config(page_icon="🏀", layout="wide")
+
+# --- Hardcoded to current day ---
+today = datetime.now().date()
+chosen_date = today.strftime("%Y%m%d")
+
+# --- Fetch ESPN games ---
+@st.cache_data(ttl=300)  # Cache for 5 min to avoid API hammering
+def fetch_scoreboard_cached(date_str):
+    return get_espn_scoreboard(date_str)
+
+scoreboard = fetch_scoreboard_cached(chosen_date)
+
+# --- Render banner ---
+render_espn_banner(scoreboard)
+
+# Divider before your tabs
+st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
 
 # =========================
 # THEME / CSS
@@ -778,51 +983,6 @@ NBA_CUP_DATES = pd.to_datetime([
     # "2024-11-12", "2024-11-13", etc.
     # For 2025-26 season, placeholder empty for now
 ])
-
-games = get_today_games()
-
-if games:
-    st.markdown(
-        """
-        <div style="
-            width:100%;
-            overflow-x:auto;
-            white-space:nowrap;
-            padding:12px 0;
-            border-bottom:1px solid #333;
-            background:rgba(255,255,255,0.03);
-        ">
-        """,
-        unsafe_allow_html=True,
-    )
-
-    banner_html = ""
-
-    for g in games:
-        time_str = g.get("time", "")
-
-        banner_html += f"""
-            <span style="
-                display:inline-flex;
-                align-items:center;
-                gap:8px;
-                margin-right:28px;
-                padding:6px 10px;
-                background:rgba(0,0,0,0.25);
-                border-radius:10px;
-                border:1px solid #444;
-            ">
-                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-weight:700;color:#fff;">{g['away']}</span>
-                <span style="opacity:0.6;">@</span>
-                <span style="font-weight:700;color:#fff;">{g['home']}</span>
-                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
-            </span>
-        """
-
-    st.markdown(banner_html, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # =========================
