@@ -922,62 +922,34 @@ with tab_breakeven:
 # TAB 3: DEFENSIVE MATRIX
 # =========================
 with tab_defense:
-    st.subheader("🧱 Defensive Matrix — Current Season (Per 48 Minutes)")
+    st.subheader("🧱 Defensive Matrix — Simplified (Team-Level)")
 
-    position = st.selectbox("Position", ["PG","SG","SF","PF","C"], index=3)
-    stat_choice = st.selectbox("Stat", ["PTS","REB","AST","FG3M","STL","BLK","PRA"], index=0)
-    last_n_def = st.slider("Last N Games per Player", 5, 82, 20)
-    min_min_def = st.slider("Min Minutes per Game", 5, 40, 12)
+    stat_choice = st.selectbox("Stat", ["PTS","REB","AST","FG3M","STL","BLK"], index=0)
+    season = get_current_season()
 
     if st.button("Compute Defensive Matrix"):
-        current_season = get_current_season()
-        st.write(f"⚡ Fetching {current_season} regular season data...")
+        st.write(f"⚡ Fetching {season} team-level opponent stats...")
 
-        df = get_league_logs_current_season()
-        if df.empty:
-            st.warning("No data returned for current season.")
-            st.stop()
+        # Pull team-level box scores for all games this season (fast)
+        logs = leaguegamelog.LeagueGameLog(
+            season=season,
+            season_type_all_star="Regular Season",
+            player_or_team_abbreviation="T",
+            timeout=30
+        ).get_data_frames()[0]
 
-        df = df.dropna(subset=["OPP","MIN_NUM"])
-        df = df[df["MIN_NUM"] >= min_min_def]
-        df = df.sort_values(["PLAYER_ID","GAME_DATE_DT"], ascending=[True, False])
-        df["rn"] = df.groupby("PLAYER_ID").cumcount() + 1
-        df = df[df["rn"] <= last_n_def].drop(columns=["rn"])
+        # Convert numeric columns
+        for col in [stat_choice]:
+            logs[col] = pd.to_numeric(logs[col], errors="coerce")
 
-        # Compute stat
-        if stat_choice == "PRA":
-            df["STAT"] = df["PTS"].fillna(0)+df["REB"].fillna(0)+df["AST"].fillna(0)
-        else:
-            df["STAT"] = df[stat_choice].fillna(0)
-        df["STAT48_NUM"] = df["STAT"] * 48.0
-        df["MINUTES"] = df["MIN_NUM"]
+        # Aggregate total stat allowed TO opponents
+        opp_stats = logs.groupby("MATCHUP", as_index=False)[stat_choice].sum()
 
-        # Get cached positions
-        if "pos_cache" not in st.session_state:
-            st.session_state.pos_cache = {}
-        pos_cache = st.session_state.pos_cache
-        unique_pids = df["PLAYER_ID"].unique().tolist()
-        missing = [pid for pid in unique_pids if pid not in pos_cache]
-        if missing:
-            pb = st.progress(0)
-            for i, pid in enumerate(missing, 1):
-                pos_cache[pid] = get_player_position(int(pid))
-                pb.progress(i/len(missing))
-            st.session_state.pos_cache = pos_cache
+        # Extract team abbreviations (e.g. "BOS @ PHI" -> PHI)
+        opp_stats["OPP"] = opp_stats["MATCHUP"].str.extract(r"@ (\w+)|vs\. (\w+)", expand=True).bfill(axis=1).iloc[:,0]
+        df_summary = opp_stats.groupby("OPP", as_index=False)[stat_choice].mean()
+        df_summary = df_summary.rename(columns={stat_choice: f"{stat_choice} Allowed"}).sort_values(f"{stat_choice} Allowed", ascending=False)
 
-        df["RAW_POS"] = df["PLAYER_ID"].map(pos_cache)
-        df = df[df["RAW_POS"].apply(lambda rp: position_matches(rp, position))]
-        if df.empty:
-            st.warning("No matching players for that position.")
-            st.stop()
-
-        # Aggregate
-        agg = df.groupby("OPP", as_index=False)[["STAT48_NUM","MINUTES"]].sum()
-        agg["VAL"] = (agg["STAT48_NUM"] / agg["MINUTES"]).round(1)
-        label = f"{stat_choice} Allowed per 48m to {position}s"
-        df_summary = agg[["OPP","VAL"]].rename(columns={"VAL": label}).sort_values(label, ascending=False)
-
-        # Team colors
         TEAM_COLORS = {
             "ATL":"#E03A3E","BOS":"#007A33","BKN":"#000000","CHA":"#1D1160","CHI":"#CE1141",
             "CLE":"#860038","DAL":"#00538C","DEN":"#0E2240","DET":"#C8102E","GSW":"#1D428A",
@@ -986,41 +958,39 @@ with tab_defense:
             "OKC":"#007AC1","ORL":"#0077C0","PHI":"#006BB6","PHX":"#1D1160","POR":"#E03A3E",
             "SAC":"#5A2D81","SAS":"#C4CED4","TOR":"#CE1141","UTA":"#002B5C","WAS":"#002B5C"
         }
-        def color_team_cell(val):
+        def color_team(val):
             color = TEAM_COLORS.get(val, "#00c896")
             return f"background-color:{color}; color:#fff; font-weight:700; text-align:center; border-radius:8px;"
 
-        # Display Top 5 / Bottom 5
+        # Split columns
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(f"### 🏆 Most {stat_choice} Allowed to {position}s")
-            top = df_summary.head(5)
-            st.dataframe(top.style.hide(axis="index")
-                .applymap(color_team_cell, subset=["OPP"])
-                .set_properties(**{"font-size":"1.1rem","text-align":"center","color":"#f9fafb",
-                                   "background-color":"#1a1b1e","border":"0px"})
-                .format({label:"{:.1f}"}), use_container_width=True)
+            st.markdown(f"### 🏆 Most {stat_choice} Allowed")
+            st.dataframe(
+                df_summary.head(5).style.hide(axis="index")
+                    .applymap(color_team, subset=["OPP"])
+                    .format({f"{stat_choice} Allowed":"{:.1f}"})
+            )
         with c2:
-            st.markdown(f"### 🧱 Fewest {stat_choice} Allowed to {position}s")
-            bot = df_summary.sort_values(label, ascending=True).head(5)
-            st.dataframe(bot.style.hide(axis="index")
-                .applymap(color_team_cell, subset=["OPP"])
-                .set_properties(**{"font-size":"1.1rem","text-align":"center","color":"#f9fafb",
-                                   "background-color":"#1a1b1e","border":"0px"})
-                .format({label:"{:.1f}"}), use_container_width=True)
+            st.markdown(f"### 🧱 Fewest {stat_choice} Allowed")
+            st.dataframe(
+                df_summary.tail(5).sort_values(f"{stat_choice} Allowed", ascending=True)
+                    .style.hide(axis="index")
+                    .applymap(color_team, subset=["OPP"])
+                    .format({f"{stat_choice} Allowed":"{:.1f}"})
+            )
 
         # Chart
-        st.markdown("### 📊 Full Defensive Matrix")
-        df_plot = df_summary.sort_values(label, ascending=True)
+        st.markdown("### 📊 Team Defensive Chart")
         fig, ax = plt.subplots(figsize=(9,6))
-        bars = ax.barh(df_plot["OPP"], df_plot[label],
-                       color=df_plot["OPP"].map(TEAM_COLORS).fillna("#00c896"),
-                       edgecolor="none", alpha=0.9)
-        for bar, team, val in zip(bars, df_plot["OPP"], df_plot[label]):
+        df_plot = df_summary.sort_values(f"{stat_choice} Allowed", ascending=True)
+        bars = ax.barh(df_plot["OPP"], df_plot[f"{stat_choice} Allowed"],
+                       color=df_plot["OPP"].map(TEAM_COLORS).fillna("#00c896"))
+        for bar, team, val in zip(bars, df_plot["OPP"], df_plot[f"{stat_choice} Allowed"]):
             ax.text(float(val)+0.2, bar.get_y()+bar.get_height()/2,
                     f"{team} — {float(val):.1f}", va="center", ha="left", fontsize=9, color="#f9fafb")
-        ax.set_xlabel(f"Avg {STAT_LABELS.get(stat_choice, stat_choice)} per 48m Allowed to {position}s")
-        ax.set_ylabel("Opponent Team")
+        ax.set_xlabel(f"Avg {stat_choice} Allowed per Game")
+        ax.set_ylabel("Opponent")
         ax.grid(alpha=0.3, linestyle="--")
         for spine in ax.spines.values(): spine.set_edgecolor("#444")
         st.pyplot(fig, use_container_width=True)
