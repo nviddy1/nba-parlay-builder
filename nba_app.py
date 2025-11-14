@@ -612,7 +612,160 @@ def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray
     # stats can't go below zero
     return np.clip(draws, 0, None)
 
+def render_result_card(player, direction, thr, stat_label, loc_text, last_n, p_hit, fair_odds, sb_odds, ev_pct):
+    ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
+    hit_str = f"{p_hit*100:.1f}%"
+    cls = "neutral"
 
+    if ev_pct is not None:
+        cls = "pos" if ev_pct >= 0 else "neg"
+
+    return f"""
+<style>
+.card {{
+    background-color: #0f291e;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid #1e3a2f;
+    margin-top: 10px;
+}}
+.card.pos {{ border-color: #00c896; }}
+.card.neg {{ border-color: #ff6b6b; }}
+.card h2 {{
+    margin: 0 0 8px 0;
+    color: #f0fdf4;
+    font-size: 1.25rem;
+}}
+.card .cond {{
+    color: #d1fae5;
+    font-size: 0.9rem;
+    margin-bottom: 12px;
+}}
+.card .row {{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}}
+.card .m {{
+    background-color: #15342a;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid #1e4d3b;
+}}
+.card .lab {{
+    font-size: 0.75rem;
+    color: #9ca3af;
+}}
+.card .val {{
+    font-size: 1.1rem;
+    color: #f0fdf4;
+    font-weight: 600;
+}}
+.chip {{
+    display: inline-block;
+    background-color: #1e4d3b;
+    color: #d1fae5;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+}}
+</style>
+
+<div class="card {cls}">
+  <h2>🎲 Monte Carlo Result</h2>
+
+  <div class="cond">
+    {player} — {direction} {thr} {stat_label} ({loc_text}, last {last_n} games)
+  </div>
+
+  <div class="row">
+    <div class="m"><div class="lab">Sim Hit %</div><div class="val">{hit_str}</div></div>
+    <div class="m"><div class="lab">Fair Odds</div><div class="val">{fair_odds}</div></div>
+    <div class="m"><div class="lab">Book Odds</div><div class="val">{sb_odds}</div></div>
+    <div class="m"><div class="lab">EV</div><div class="val">{ev_str}</div></div>
+  </div>
+
+  <div style="margin-top:10px;">
+    <span class="chip">{('🔥 +EV (Monte Carlo)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV by simulation')}</span>
+  </div>
+</div>
+"""
+
+def render_distribution_summary_card(mean_val, median_val, stdev, p10, p90, p_hit):
+    return f"""
+<style>
+.summary-card {{
+    background-color: #0f291e;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid #1e3a2f;
+    margin-top: 15px;
+}}
+.summary-title {{
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #d1fae5;
+    margin-bottom: 10px;
+}}
+.summary-grid {{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}}
+.summary-item {{
+    background-color: #15342a;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #1e4d3b;
+}}
+.summary-label {{
+    font-size: 0.8rem;
+    color: #9ca3af;
+}}
+.summary-value {{
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #f0fdf4;
+}}
+</style>
+
+<div class="summary-card">
+    <div class="summary-title">📊 Distribution Summary</div>
+    <div class="summary-grid">
+
+        <div class="summary-item">
+            <div class="summary-label">Mean</div>
+            <div class="summary-value">{mean_val:.1f}</div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-label">Median</div>
+            <div class="summary-value">{median_val:.1f}</div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-label">Std Dev</div>
+            <div class="summary-value">{stdev:.2f}</div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-label">10th Percentile</div>
+            <div class="summary-value">{p10:.1f}</div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-label">90th Percentile</div>
+            <div class="summary-value">{p90:.1f}</div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-label">Sim Hit %</div>
+            <div class="summary-value">{p_hit*100:.1f}%</div>
+        </div>
+
+    </div>
+</div>
+"""
 
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
