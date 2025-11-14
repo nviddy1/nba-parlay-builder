@@ -24,7 +24,6 @@ def render_espn_banner(scoreboard):
     if not scoreboard or "events" not in scoreboard:
         st.warning("No games found for this date.")
         return
-
     st.markdown(
         """
         <style>
@@ -34,6 +33,7 @@ def render_espn_banner(scoreboard):
             white-space: nowrap;
             padding: 10px 0;
             border-bottom: 1px solid #333;
+            gap: 16px;
         }
         .espn-game-card {
             flex: 0 0 auto;
@@ -41,84 +41,119 @@ def render_espn_banner(scoreboard):
             flex-direction: column;
             align-items: center;
             background: #1e1e1e;
-            padding: 10px 16px;
-            margin-right: 12px;
+            padding: 12px 16px;
             border-radius: 10px;
             border: 1px solid #333;
-        }
-        .espn-team {
-            display: flex;
-            align-items: center;
-            width: 120px;
-            justify-content: space-between;
-            margin: 4px 0;
-        }
-        .espn-team img {
-            height: 26px;
-            width: 26px;
+            min-width: 220px;
         }
         .espn-time {
             font-size: 12px;
             color: #aaa;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        .espn-time .tv {
+            font-size: 10px;
+            color: #ff9900;
+            margin-top: 2px;
+        }
+        .espn-matchup {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 4px;
+        }
+        .espn-team {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+        }
+        .espn-team img {
+            height: 32px;
+            width: 32px;
+            margin-bottom: 2px;
+        }
+        .espn-team-abbr {
+            font-size: 14px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 2px;
         }
         .espn-record {
-            font-size: 12px;
+            font-size: 11px;
             color: #888;
-            margin-left: 6px;
+        }
+        .espn-at {
+            font-size: 16px;
+            color: #fff;
+            font-weight: bold;
+            margin: 0 8px;
+            white-space: nowrap;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
-
     html = '<div class="espn-banner-container">'
-
     for game in scoreboard["events"]:
         comp = game["competitions"][0]
         status = game["status"]["type"]["shortDetail"]
-
-        # teams
-        t1 = comp["competitors"][0]
-        t2 = comp["competitors"][1]
-
+        # Determine home/away: home is usually the second competitor if not specified
+        # ESPN API: competitor[1] is typically home
+        t1 = comp["competitors"][0]  # Away
+        t2 = comp["competitors"][1]  # Home
         def fmt_team(team):
-            return {
-                "name": team["team"]["abbreviation"],
-                "logo": team["team"]["logo"],
-                "record": team["records"][0]["summary"] if team.get("records") else "",
-            }
-
-        team1 = fmt_team(t1)
-        team2 = fmt_team(t2)
-
-        # time
+            abbr = team["team"]["abbreviation"]
+            logo = team["team"]["logo"]
+            # Records: use current summary, fallback to empty
+            record = ""
+            if team.get("records") and len(team["records"]) > 0:
+                record = team["records"][0]["summary"]
+            return abbr, logo, record
+        
+        away_abbr, away_logo, away_record = fmt_team(t1)
+        home_abbr, home_logo, home_record = fmt_team(t2)
+        
+        # Time
         start_time = datetime.fromisoformat(game["date"].replace("Z", "+00:00"))
         est = start_time.astimezone(pytz.timezone("US/Eastern"))
         time_str = est.strftime("%-I:%M %p ET")
-
+        
+        # TV network if available
+        tv = ""
+        if "broadcasts" in comp and len(comp["broadcasts"]) > 0:
+            tv_network = comp["broadcasts"][0].get("names", [""])[0]
+            if tv_network:
+                tv = f'<div class="tv">{tv_network}</div>'
+        
+        # For pre-game, show time; if in-progress/live, could add status but keeping simple for banner
+        if status.lower() in ["final", "in progress"]:
+            # For live/finished, adjust display (e.g., show score), but screenshot is pre-game
+            time_str = status  # Placeholder; expand as needed
+        
         html += f"""
         <div class="espn-game-card">
-            <div class="espn-time">{time_str}</div>
-
-            <div class="espn-team">
-                <img src="{team1['logo']}">
-                <span>{team1['name']}</span>
-                <span class="espn-record">{team1['record']}</span>
-            </div>
-
-            <div class="espn-team">
-                <img src="{team2['logo']}">
-                <span>{team2['name']}</span>
-                <span class="espn-record">{team2['record']}</span>
+            <div class="espn-time">{time_str}{tv}</div>
+            <div class="espn-matchup">
+                <div class="espn-team">
+                    <img src="{away_logo}" alt="{away_abbr}">
+                    <div class="espn-team-abbr">{away_abbr}</div>
+                    <div class="espn-record">{away_record}</div>
+                </div>
+                <div class="espn-at">@</div>
+                <div class="espn-team">
+                    <img src="{home_logo}" alt="{home_abbr}">
+                    <div class="espn-team-abbr">{home_abbr}</div>
+                    <div class="espn-record">{home_record}</div>
+                </div>
             </div>
         </div>
         """
-
     html += "</div>"
-
     st.markdown(html, unsafe_allow_html=True)
-    
+
 # =========================
 # PAGE CONFIG
 # =========================
@@ -132,24 +167,25 @@ dates = {
     "Tomorrow": today + timedelta(days=1),
     "In 2 Days": today + timedelta(days=2),
 }
-
 chosen_label = st.selectbox(
     "Games",
     list(dates.keys()),
     index=0,
 )
-
 chosen_date = dates[chosen_label].strftime("%Y%m%d")
 
 # --- Fetch ESPN games ---
-scoreboard = get_espn_scoreboard(chosen_date)
+@st.cache_data(ttl=300)  # Cache for 5 min to avoid API hammering
+def fetch_scoreboard_cached(date_str):
+    return get_espn_scoreboard(date_str)
+
+scoreboard = fetch_scoreboard_cached(chosen_date)
 
 # --- Render banner ---
 render_espn_banner(scoreboard)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
-
 
 # =========================
 # THEME / CSS
