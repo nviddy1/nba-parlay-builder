@@ -966,6 +966,10 @@ with tab_mc:
     st.subheader("🎲 Monte Carlo Prop Simulator")
 
     c1, c2 = st.columns([2, 1])
+
+    # -------------------------
+    # INPUTS
+    # -------------------------
     with c1:
         mc_text = st.text_input(
             "Prop (e.g., 'Maxey O 24.5 PTS Away')",
@@ -974,18 +978,21 @@ with tab_mc:
         )
         seasons_mc = st.multiselect(
             "Seasons",
-            ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2025-26","2024-25"],
+            ["2025-26", "2024-25", "2023-24", "2022-23"],
+            default=["2025-26", "2024-25"],
             key="seasons_mc"
         )
         last_n_mc = st.slider("Last N Games", 5, 100, 20, 1, key="lastn_mc")
         min_min_mc = st.slider("Min Minutes", 0, 40, 20, 1, key="min_mc")
-        loc_mc = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="loc_mc")
+        loc_mc = st.selectbox("Location", ["All", "Home Only", "Away"], index=0, key="loc_mc")
 
     with c2:
         odds_mc = st.number_input("Sportsbook Odds (e.g., -110)", value=-110, step=5, key="odds_mc")
         sims_mc = st.slider("Number of Simulations", 1000, 20000, 10000, 1000, key="sims_mc")
 
+    # -------------------------
+    # RUN SIM
+    # -------------------------
     if st.button("Run Simulation", key="run_mc") and mc_text.strip():
         parsed = parse_input_line(mc_text)
         if not parsed or not parsed["player"]:
@@ -996,6 +1003,8 @@ with tab_mc:
                 st.warning("Could not find that player in the NBA database.")
             else:
                 df = fetch_gamelog(pid, seasons_mc, include_playoffs=False, only_playoffs=False)
+
+                # Filter
                 d = df.copy()
                 d = d[d["MIN_NUM"] >= min_min_mc]
                 if loc_mc == "Home Only":
@@ -1006,16 +1015,20 @@ with tab_mc:
 
                 ser = compute_stat_series(d, parsed["stat"])
                 draws = monte_carlo_sim(ser, n_sims=sims_mc)
+
                 if draws.size == 0:
                     st.warning("No valid stat data to simulate from.")
                 else:
                     thr = parsed["thr"]
                     direction = parsed["dir"]
+
+                    # Hit % direction logic
                     if direction == "Under":
                         p_hit = float((draws <= thr).mean())
                     else:
                         p_hit = float((draws >= thr).mean())
 
+                    # Fair odds / EV
                     fair_odds = prob_to_american(p_hit)
                     book_prob = american_to_implied(odds_mc)
                     ev_pct = None
@@ -1024,6 +1037,7 @@ with tab_mc:
 
                     stat_label = STAT_LABELS.get(parsed["stat"], parsed["stat"])
                     dir_short = "O" if direction == "Over" else "U"
+
                     hit_str = f"{p_hit*100:.1f}%"
                     ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
 
@@ -1031,63 +1045,113 @@ with tab_mc:
                     if ev_pct is not None:
                         cls = "pos" if ev_pct >= 0 else "neg"
 
+                    # -------------------------
+                    # MONTE CARLO RESULT CARD
+                    # -------------------------
+                    st.markdown(f"""
+                        <div class="mc-card">
+                            <h3 class="mc-title">🎲 Monte Carlo Result</h3>
+
+                            <p class="mc-sub">
+                                {parsed['player']} — {dir_short} {thr} {stat_label} (last {last_n_mc} games)
+                            </p>
+
+                            <div class="mc-grid">
+                                <div class="mc-mini">
+                                    <div class="mc-label">Sim Hit %</div>
+                                    <div class="mc-value">{hit_str}</div>
+                                </div>
+
+                                <div class="mc-mini">
+                                    <div class="mc-label">Fair Odds</div>
+                                    <div class="mc-value">{fair_odds}</div>
+                                </div>
+
+                                <div class="mc-mini">
+                                    <div class="mc-label">Book Odds</div>
+                                    <div class="mc-value">{odds_mc}</div>
+                                </div>
+
+                                <div class="mc-mini">
+                                    <div class="mc-label">EV %</div>
+                                    <div class="mc-value {cls}">{ev_str}</div>
+                                </div>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    # -------------------------
+                    # DISTRIBUTION SUMMARY — compute stats
+                    # -------------------------
+                    mean = float(draws.mean())
+                    median = float(np.median(draws))
+                    std_dev = float(draws.std())
+                    p10 = float(np.percentile(draws, 10))
+                    p90 = float(np.percentile(draws, 90))
+                    sim_hit = p_hit
+
+                    # -------------------------
+                    # DISTRIBUTION SUMMARY UI
+                    # -------------------------
                     st.markdown("""
-            <div class="dist-card">
-                <h3 class="dist-title">📊 Distribution Summary</h3>
+                    <div class="dist-card">
+                        <h3 class="dist-title">📊 Distribution Summary</h3>
 
-                <div class="dist-grid">
-                    <div class="dist-item">
-                        <div class="dist-label">Mean</div>
-                        <div class="dist-value">{mean:.1f}</div>
+                        <div class="dist-grid">
+                            <div class="dist-item">
+                                <div class="dist-label">Mean</div>
+                                <div class="dist-value">{mean:.1f}</div>
+                            </div>
+
+                            <div class="dist-item">
+                                <div class="dist-label">Median</div>
+                                <div class="dist-value">{median:.1f}</div>
+                            </div>
+
+                            <div class="dist-item">
+                                <div class="dist-label">Std Dev</div>
+                                <div class="dist-value">{std_dev:.2f}</div>
+                            </div>
+
+                            <div class="dist-item">
+                                <div class="dist-label">10th %ile</div>
+                                <div class="dist-value">{p10:.1f}</div>
+                            </div>
+
+                            <div class="dist-item">
+                                <div class="dist-label">90th %ile</div>
+                                <div class="dist-value">{p90:.1f}</div>
+                            </div>
+
+                            <div class="dist-item">
+                                <div class="dist-label">Sim Hit %</div>
+                                <div class="dist-value">{sim_hit:.1%}</div>
+                            </div>
+                        </div>
+
+                        <div class="dist-footnote">
+                            Based on Monte Carlo draws from historical data.
+                        </div>
                     </div>
+                    """.format(
+                        mean=mean,
+                        median=median,
+                        std_dev=std_dev,
+                        p10=p10,
+                        p90=p90,
+                        sim_hit=sim_hit
+                    ), unsafe_allow_html=True)
 
-                    <div class="dist-item">
-                        <div class="dist-label">Median</div>
-                        <div class="dist-value">{median:.1f}</div>
-                    </div>
-
-                    <div class="dist-item">
-                        <div class="dist-label">Std Dev</div>
-                        <div class="dist-value">{std_dev:.2f}</div>
-                    </div>
-
-                    <div class="dist-item">
-                        <div class="dist-label">10th %ile</div>
-                        <div class="dist-value">{p10:.1f}</div>
-                    </div>
-
-                    <div class="dist-item">
-                        <div class="dist-label">90th %ile</div>
-                        <div class="dist-value">{p90:.1f}</div>
-                    </div>
-
-                    <div class="dist-item">
-                        <div class="dist-label">Sim Hit %</div>
-                        <div class="dist-value">{sim_hit:.1%}</div>
-                    </div>
-                </div>
-
-                <div class="dist-footnote">
-                    Based on Monte Carlo draws from historical data.
-                </div>
-            </div>
-        """.format(
-            mean=mean,
-            median=median,
-            std_dev=std_dev,
-            p10=p10,
-            p90=p90,
-            sim_hit=sim_hit
-        ), unsafe_allow_html=True)
-
-
-                    # Histogram
+                    # -------------------------
+                    # HISTOGRAM
+                    # -------------------------
                     fig, ax = plt.subplots(figsize=(6, 3))
                     ax.hist(draws, bins=20, alpha=0.85)
                     ax.axvline(thr, color="red", linestyle="--", linewidth=1.5)
                     ax.set_xlabel(stat_label)
                     ax.set_ylabel("Simulated frequency")
                     st.pyplot(fig, use_container_width=True)
+
 
 
 # =========================
