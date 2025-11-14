@@ -701,29 +701,12 @@ def render_distribution_summary_card(mean, median, std, p10, p90, hit_pct):
     border: 1px solid #1e3a2f;
     margin-top: 15px;
 }}
-.summary-title {{
-    font-size: 1.2rem;
-    font-weight: 600;
-    color: #d1fae5;
-    margin-bottom: 12px;
-}}
-.summary-item {{
-    margin-bottom: 10px;
-}}
-.summary-label {{
-    font-size: 0.85rem;
-    color: #9ca3af;
-}}
-.summary-value {{
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #f0fdf4;
-}}
+.summary-item {{ margin-bottom: 12px; }}
+.summary-label {{ color: #9ca3af; font-size: 0.85rem; }}
+.summary-value {{ color: #f0fdf4; font-size: 1.1rem; font-weight: 600; }}
 </style>
 
 <div class="summary-card">
-    <div class="summary-title">📊 Distribution Summary</div>
-
     <div class="summary-item">
         <div class="summary-label">Mean</div>
         <div class="summary-value">{mean:.1f}</div>
@@ -755,6 +738,7 @@ def render_distribution_summary_card(mean, median, std, p10, p90, hit_pct):
     </div>
 </div>
 """
+
 
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
