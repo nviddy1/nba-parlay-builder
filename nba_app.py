@@ -21,7 +21,7 @@ def get_espn_scoreboard(date):
         return None
     return r.json()
 
-def render_espn_banner(scoreboard, selected_date_label):
+def render_espn_banner(scoreboard):
     if not scoreboard or "events" not in scoreboard:
         st.warning("No games found for this date.")
         return
@@ -30,28 +30,11 @@ def render_espn_banner(scoreboard, selected_date_label):
         <style>
         .espn-banner-container {
             display: flex;
-            align-items: flex-start;
             overflow-x: auto;
             white-space: nowrap;
             padding: 10px 0;
             border-bottom: 1px solid #333;
             gap: 16px;
-        }
-        .date-filter {
-            flex: 0 0 auto;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background: #1e1e1e;
-            padding: 12px 16px;
-            border-radius: 10px;
-            border: 1px solid #333;
-            min-width: 120px;
-            margin-right: 0;
-            color: #fff;
-            font-size: 14px;
-            font-weight: bold;
-            justify-content: center;
         }
         .espn-game-card {
             flex: 0 0 auto;
@@ -110,18 +93,34 @@ def render_espn_banner(scoreboard, selected_date_label):
             margin: 0 8px;
             white-space: nowrap;
         }
+        /* Style for Streamlit selectbox to look like a card */
+        .date-select-container {
+            background: #1e1e1e;
+            padding: 12px 16px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            min-width: 120px;
+            margin-right: 16px;
+            text-align: center;
+        }
+        .date-select-container .stSelectbox > div > div > select {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            cursor: pointer;
+            width: 100%;
+        }
+        .date-select-container .stSelectbox > label {
+            display: none;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
     html = '<div class="espn-banner-container">'
-    
-    # Date filter as first "card" – shows selected date label (not interactive here, controlled by Streamlit selectbox above)
-    html += f"""
-    <div class="date-filter">
-        {selected_date_label}
-    </div>
-    """
     
     events = scoreboard["events"]
     for i, game in enumerate(events):
@@ -200,7 +199,7 @@ def render_espn_banner(scoreboard, selected_date_label):
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.markdown("🏀 NBA Player Prop Tools")
 
-# --- Date Selector (no label, just dropdown) ---
+# --- Date Selector integrated as left "card" ---
 today = datetime.now().date()
 date_range = [
     (today.strftime("%b %d"), today.strftime("%Y%m%d")),
@@ -209,7 +208,7 @@ date_range = [
 ]
 date_labels = [label for label, _ in date_range]
 date_dict = {label: date_str for label, date_str in date_range}
-chosen_label = st.selectbox("", options=date_labels, index=0)
+chosen_label = st.selectbox("", options=date_labels, index=0, key="date_filter")
 chosen_date = date_dict[chosen_label]
 
 # --- Fetch ESPN games ---
@@ -219,8 +218,8 @@ def fetch_scoreboard_cached(date_str):
 
 scoreboard = fetch_scoreboard_cached(chosen_date)
 
-# --- Render banner ---
-render_espn_banner(scoreboard, chosen_label)
+# --- Render banner (games only; date is handled by selectbox above) ---
+render_espn_banner(scoreboard)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
