@@ -1031,23 +1031,55 @@ with tab_mc:
                     if ev_pct is not None:
                         cls = "pos" if ev_pct >= 0 else "neg"
 
-                    st.markdown(f"""
-<div class="card {cls}">
-  <h2>🎲 Monte Carlo Result</h2>
-  <div class="cond">
-    {parsed["player"]} — {dir_short} {fmt_half(thr)} {stat_label} ({loc_mc}, last {last_n_mc} games)
-  </div>
-  <div class="row">
-    <div class="m"><div class="lab">Sim Hit Probability</div><div class="val">{hit_str}</div></div>
-    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{fair_odds}</div></div>
-    <div class="m"><div class="lab">Book Odds</div><div class="val">{odds_mc}</div></div>
-    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_str}</div></div>
-  </div>
-  <div style="margin-top:10px;">
-    <span class="chip">{('🔥 +EV (Monte Carlo)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV by simulation')}</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+                    st.markdown("""
+            <div class="dist-card">
+                <h3 class="dist-title">📊 Distribution Summary</h3>
+
+                <div class="dist-grid">
+                    <div class="dist-item">
+                        <div class="dist-label">Mean</div>
+                        <div class="dist-value">{mean:.1f}</div>
+                    </div>
+
+                    <div class="dist-item">
+                        <div class="dist-label">Median</div>
+                        <div class="dist-value">{median:.1f}</div>
+                    </div>
+
+                    <div class="dist-item">
+                        <div class="dist-label">Std Dev</div>
+                        <div class="dist-value">{std_dev:.2f}</div>
+                    </div>
+
+                    <div class="dist-item">
+                        <div class="dist-label">10th %ile</div>
+                        <div class="dist-value">{p10:.1f}</div>
+                    </div>
+
+                    <div class="dist-item">
+                        <div class="dist-label">90th %ile</div>
+                        <div class="dist-value">{p90:.1f}</div>
+                    </div>
+
+                    <div class="dist-item">
+                        <div class="dist-label">Sim Hit %</div>
+                        <div class="dist-value">{sim_hit:.1%}</div>
+                    </div>
+                </div>
+
+                <div class="dist-footnote">
+                    Based on Monte Carlo draws from historical data.
+                </div>
+            </div>
+        """.format(
+            mean=mean,
+            median=median,
+            std_dev=std_dev,
+            p10=p10,
+            p90=p90,
+            sim_hit=sim_hit
+        ), unsafe_allow_html=True)
+
 
                     # Histogram
                     fig, ax = plt.subplots(figsize=(6, 3))
