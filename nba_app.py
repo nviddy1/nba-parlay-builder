@@ -833,7 +833,7 @@ with tab_breakeven:
                 st.table(pd.DataFrame(rows).set_index("Stat"))
 
 # =========================
-# TAB 3: HOT MATCHUPS (SIMPLIFIED, 4 STATS SIDE-BY-SIDE)
+# TAB 3: HOT MATCHUPS (TEAM DEFENSIVE AVERAGES)
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
@@ -847,7 +847,7 @@ def get_current_season_str():
 
 @st.cache_data(show_spinner=True)
 def load_team_logs(season: str) -> pd.DataFrame:
-    """Fetch team-level game logs (one row per team game)."""
+    """Fetch team-level game logs (one row per team per game)."""
     df = leaguegamelog.LeagueGameLog(
         season=season,
         season_type_all_star="Regular Season",
@@ -855,11 +855,12 @@ def load_team_logs(season: str) -> pd.DataFrame:
         timeout=60
     ).get_data_frames()[0]
 
+    # numeric conversion
     for k in ["PTS","REB","AST","FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
 
-    # Opponent abbreviation
+    # extract opponent abbreviation
     df["OPP"] = (
         df["MATCHUP"].astype(str)
         .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
@@ -868,7 +869,7 @@ def load_team_logs(season: str) -> pd.DataFrame:
     return df
 
 def get_team_color(team_abbr):
-    """Assign fixed color by team abbreviation."""
+    """NBA primary color mapping (approx)"""
     color_map = {
         "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#000000", "CHA": "#1D1160", "CHI": "#CE1141",
         "CLE": "#860038", "DAL": "#00538C", "DEN": "#0E2240", "DET": "#C8102E", "GSW": "#1D428A",
@@ -879,7 +880,16 @@ def get_team_color(team_abbr):
     }
     return color_map.get(team_abbr, "#999999")
 
-tab_matchups = st.tabs(["📈 Hot Matchups"])[0]
+def soft_bg(hex_color, opacity=0.15):
+    """Generate a readable background color derived from team color."""
+    try:
+        rgba = mcolors.to_rgba(hex_color, opacity)
+        return mcolors.to_hex(rgba)
+    except Exception:
+        return "#222222"
+
+# make sure this tab is part of your main definition:
+# tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
 
 with tab_matchups:
     st.subheader("📈 Hot Matchups — Team Defensive Averages (Per Game)")
@@ -907,18 +917,21 @@ with tab_matchups:
                 team = row["OPP"]
                 val = row[f"{stat}_ALLOWED_PER_GAME"]
                 color = get_team_color(team)
+                bg = soft_bg(color, 0.18)
+                text_shadow = f"0 0 6px {color}88"
                 st.markdown(
                     f"""
                     <div style='display:flex;align-items:center;justify-content:space-between;
-                                margin-bottom:4px;padding:4px 8px;border-radius:6px;
-                                background-color:{color}15;'>
-                        <span style='font-weight:600;color:{color};font-size:1rem;'>{team}</span>
-                        <span style='font-size:0.95rem;color:#ccc;'>{val:.1f}</span>
+                                margin-bottom:4px;padding:5px 10px;border-radius:8px;
+                                background-color:{bg};'>
+                        <span style='font-weight:600;color:{color};font-size:1rem;text-shadow:{text_shadow};'>
+                            {team}
+                        </span>
+                        <span style='font-size:0.95rem;color:#e5e7eb;'>{val:.1f}</span>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
 
     st.divider()
-    st.caption(f"Season {season} • Source: NBA Stats API • Regular season team logs (per-game averages)")
-
+    st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
