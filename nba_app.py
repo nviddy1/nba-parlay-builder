@@ -1035,7 +1035,7 @@ def render_matchup_exploiter():
 
     st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
 
-    season = get_current_season_str()
+    season = season_dropdown
 
     # Get defense and pace data
     team_def = get_team_defense_table(season)
