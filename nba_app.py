@@ -1065,6 +1065,10 @@ with tab_injury:
     st.subheader("🩹 Injury Impact Analyzer")
 
     colL, colR = st.columns([1.2, 2])
+
+    # --------------------------
+    # LEFT SIDE CONTROLS
+    # --------------------------
     with colL:
         season_inj = st.selectbox(
             "Season",
@@ -1072,8 +1076,11 @@ with tab_injury:
             index=1,
             key="season_inj"
         )
+
         team_inj = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHX") if "PHX" in TEAM_ABBRS else 0)
+
         roster_df = get_team_roster(season_inj, team_inj)
+
         if roster_df.empty:
             st.warning("Could not load roster for this team/season.")
             injured_name = None
@@ -1089,81 +1096,157 @@ with tab_injury:
             ) if injured_name else None
 
         stat_inj = st.selectbox("Stat", ["PTS","REB","AST","PRA"], index=0, key="stat_inj")
-        min_games_without = st.slider("Min games without to include", 1, 15, 3, 1, key="min_g_without")
+
+        min_games_without = st.slider(
+            "Min games without to include", 
+            1, 15, 3, 1, 
+            key="min_g_without"
+        )
 
         run_inj = st.button("Analyze Impact", key="run_inj")
 
+    # --------------------------
+    # RIGHT SIDE RESULTS
+    # --------------------------
     with colR:
         if run_inj:
             if not injured_name or injured_id is None:
                 st.warning("Select an injured player first.")
-            else:
-                logs = get_league_player_logs(season_inj)
-                team_logs = logs[logs["TEAM_ABBREVIATION"] == team_inj].copy()
-                if team_logs.empty:
-                    st.warning("No logs for this team / season.")
-                else:
-                    if stat_inj == "PRA":
-                        team_logs["PRA"] = team_logs["PTS"].fillna(0) + team_logs["REB"].fillna(0) + team_logs["AST"].fillna(0)
+                st.stop()
 
-                    inj_logs = team_logs[team_logs["PLAYER_ID"] == injured_id]
-                    if inj_logs.empty:
-                        st.warning(f"{injured_name} has no games logged for this season.")
-                    else:
-                        games_with = set(inj_logs["GAME_ID"].unique())
-                        all_games = set(team_logs["GAME_ID"].unique())
-                        games_without = all_games - games_with
+            logs = get_league_player_logs(season_inj)
+            team_logs = logs[logs["TEAM_ABBREVIATION"] == team_inj].copy()
 
-                        if not games_without:
-                            st.warning(f"No games found for {team_inj} without {injured_name}.")
-                        else:
-                            with_df = team_logs[
-                                (team_logs["GAME_ID"].isin(games_with)) &
-                                (team_logs["PLAYER_ID"] != injured_id)
-                            ].copy()
-                            without_df = team_logs[
-                                (team_logs["GAME_ID"].isin(games_without)) &
-                                (team_logs["PLAYER_ID"] != injured_id)
-                            ].copy()
+            if team_logs.empty:
+                st.warning("No logs for this team/season.")
+                st.stop()
 
-                            stat_col = stat_inj
-                            g_with = with_df.groupby("PLAYER_ID")[stat_col].mean()
-                            g_without = without_df.groupby("PLAYER_ID")[stat_col].mean()
-                            n_without = without_df.groupby("PLAYER_ID")["GAME_ID"].nunique()
+            # Build PRA column when needed
+            if stat_inj == "PRA":
+                team_logs["PRA"] = (
+                    team_logs["PTS"].fillna(0)
+                    + team_logs["REB"].fillna(0)
+                    + team_logs["AST"].fillna(0)
+                )
 
-                            idx = sorted(set(g_with.index) | set(g_without.index))
-                            rows = []
-                            for pid in idx:
-                                w = g_with.get(pid, np.nan)
-                                wo = g_without.get(pid, np.nan)
-                                nwo = int(n_without.get(pid, 0))
-                                if nwo < min_games_without:
-                                    continue
-                                delta = wo - w
-                                name = roster_df.loc[roster_df["PLAYER_ID"] == pid, "PLAYER"]
-                                name = name.iloc[0] if not name.empty else str(pid)
-                                rows.append({
-                                    "Player": name,
-                                    f"{stat_col} w/ {injured_name}": w,
-                                    f"{stat_col} w/o {injured_name}": wo,
-                                    "Games w/o": nwo,
-                                    "Delta": delta
-                                })
+            # Games where injured player played
+            inj_logs = team_logs[team_logs["PLAYER_ID"] == injured_id]
+            if inj_logs.empty:
+                st.warning(f"{injured_name} has no games logged for this season.")
+                st.stop()
 
-                            if not rows:
-                                st.warning("No teammates met the minimum games without filter.")
-                            else:
-                                impact_df = pd.DataFrame(rows)
-                                impact_df = impact_df.sort_values("Delta", ascending=False)
-                                st.caption(f"Positive Delta = player gains production when {injured_name} is OUT.")
-                                st.dataframe(
-                                    impact_df.style.format({
-                                        f"{stat_col} w/ {injured_name}": "{:.1f}",
-                                        f"{stat_col} w/o {injured_name}": "{:.1f}",
-                                        "Delta": "{:+.1f}"
-                                    }),
-                                    use_container_width=True
-                                )
+            games_with = set(inj_logs["GAME_ID"].unique())
+            all_games = set(team_logs["GAME_ID"].unique())
+            games_without = all_games - games_with
+
+            if not games_without:
+                st.warning(f"No games found for {team_inj} without {injured_name}.")
+                st.stop()
+
+            # Teammate stats WITH injured player
+            with_df = team_logs[
+                (team_logs["GAME_ID"].isin(games_with)) &
+                (team_logs["PLAYER_ID"] != injured_id)
+            ].copy()
+
+            # Teammate stats WITHOUT injured player
+            without_df = team_logs[
+                (team_logs["GAME_ID"].isin(games_without)) &
+                (team_logs["PLAYER_ID"] != injured_id)
+            ].copy()
+
+            stat_col = stat_inj
+
+            g_with = with_df.groupby("PLAYER_ID")[stat_col].mean()
+            g_without = without_df.groupby("PLAYER_ID")[stat_col].mean()
+            n_without = without_df.groupby("PLAYER_ID")["GAME_ID"].nunique()
+
+            rows = []
+            idx = sorted(set(g_with.index) | set(g_without.index))
+
+            for pid in idx:
+                w = g_with.get(pid, np.nan)
+                wo = g_without.get(pid, np.nan)
+                nwo = int(n_without.get(pid, 0))
+
+                # Respect min games filter
+                if nwo < min_games_without:
+                    continue
+
+                delta = wo - w
+                name = roster_df.loc[roster_df["PLAYER_ID"] == pid, "PLAYER"]
+                name = name.iloc[0] if not name.empty else str(pid)
+
+                rows.append({
+                    "Player": name,
+                    f"{stat_col} w/ {injured_name}": w,
+                    f"{stat_col} w/o {injured_name}": wo,
+                    "Games w/o": nwo,
+                    "Delta": delta
+                })
+
+            if not rows:
+                st.warning("No teammates met the minimum games without filter.")
+                st.stop()
+
+            # Build final DataFrame
+            impact_df = pd.DataFrame(rows)
+            impact_df = impact_df.sort_values("Delta", ascending=False).reset_index(drop=True)
+
+            # --------------------------
+            # PRETTY DARK-STYLED TABLE
+            # --------------------------
+
+            def style_injury_table(df):
+                # Base dark styling
+                styles = [
+                    dict(selector="th", props=[
+                        ("background-color", "#1f2125"),
+                        ("color", "#f9fafb"),
+                        ("font-size", "0.9rem"),
+                        ("font-weight", "700"),
+                        ("border-bottom", "1px solid #333")
+                    ]),
+                    dict(selector="tr", props=[
+                        ("border-bottom", "1px solid #2a2d31")
+                    ]),
+                    dict(selector="td", props=[
+                        ("background-color", "#131417"),
+                        ("color", "#e5e7eb"),
+                        ("font-size", "0.9rem"),
+                        ("padding", "8px 10px")
+                    ]),
+                    dict(selector="table", props=[
+                        ("border-collapse", "collapse"),
+                        ("border-radius", "8px"),
+                        ("overflow", "hidden"),
+                        ("margin-top", "8px")
+                    ])
+                ]
+
+                styler = df.style.set_table_styles(styles)
+
+                # Color deltas green/red
+                def color_delta(v):
+                    if v > 0:
+                        return "color:#7CFCBE; font-weight:700;"
+                    elif v < 0:
+                        return "color:#FF6B6B; font-weight:700;"
+                    return "color:#f9fafb;"
+
+                # Format numeric columns
+                styler = styler.format({
+                    f"{stat_col} w/ {injured_name}": "{:.1f}",
+                    f"{stat_col} w/o {injured_name}": "{:.1f}",
+                    "Delta": "{:+.1f}"
+                })
+
+                styler = styler.applymap(color_delta, subset=["Delta"])
+
+                return styler.hide(axis="index")
+
+            st.caption(f"Positive Delta = player gains production when **{injured_name}** is OUT.")
+            st.dataframe(style_injury_table(impact_df), use_container_width=True)
 
 # =========================
 # TAB 5: HOT MATCHUPS (Team defensive averages)
