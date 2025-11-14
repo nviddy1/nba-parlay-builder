@@ -988,7 +988,7 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_mc, tab_injury, tab_matchups = st.tabs(
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups = st.tabs(
     ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense"]
 )
 
