@@ -61,13 +61,13 @@ st.title("🏀 NBA Player Prop Tools")
 st.markdown("### ")
 
 # Date selector (default = today)
-default_date = datetime.today().strftime("%Y-%m-%d")
+default_date = datetime.today().strftime("%Y%m%d")
 selected_date = st.date_input(
     "Games for:",
-    value=datetime.strptime(default_date, "%Y-%m-%d"),
+    value=datetime.strptime(default_date, "%Y%m%d"),
     label_visibility="collapsed"
 )
-date_str = selected_date.strftime("%Y-%m-%d")
+date_str = selected_date.strftime("%Y%m%d")
 
 games_today = get_espn_games(date_str)
 
