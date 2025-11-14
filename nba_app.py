@@ -1389,18 +1389,23 @@ with tab_mc:
         stat_name = STAT_LABELS.get(parsed["stat"], parsed["stat"])
 
         # ----- Render Result Card -----
-        st.markdown(render_mc_result_card(
-            parsed["player"],
-            "O" if direction == "Over" else "U",
-            thr,
-            stat_name,
-            parsed["loc"],
-            last_n_mc,
-            hit_prob,
-            fair_odds,
-            book_odds,
-            ev_pct
-        ), unsafe_allow_html=True)
+        st.markdown(
+            render_mc_result_card(
+                parsed["player"],
+                "O" if direction == "Over" else "U",
+                thr,
+                stat_name,
+                parsed["loc"],
+                last_n_mc,
+                hit_prob,
+                fair_odds,
+                book_odds,
+                ev_pct
+            ),
+            unsafe_allow_html=True
+        )
+
+
 
         # ----- Distribution Summary Card -----
         mean_val = float(np.mean(draws))
@@ -1409,9 +1414,12 @@ with tab_mc:
         p90 = float(np.percentile(draws, 90))
         stdev = float(np.std(draws))
 
-        st.markdown(render_mc_distribution_card(
-            mean_val, median_val, stdev, p10, p90, hit_prob
-        ), unsafe_allow_html=True)
+        st.markdown(
+            render_mc_distribution_card(
+                mean_val, median_val, stdev, p10, p90, hit_prob
+            ),
+            unsafe_allow_html=True
+        )
 
         # ----- Histogram -----
         fig, ax = plt.subplots(figsize=(6, 3))
