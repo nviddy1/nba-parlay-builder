@@ -8,13 +8,148 @@ from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
+import requests
+from datetime import datetime, timedelta
+import pytz
 
+def get_espn_scoreboard(date):
+    """Fetch ESPN scoreboard data for a given date (YYYYMMDD)."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    return r.json()
 
+def render_espn_banner(scoreboard):
+    if not scoreboard or "events" not in scoreboard:
+        st.warning("No games found for this date.")
+        return
+
+    st.markdown(
+        """
+        <style>
+        .espn-banner-container {
+            display: flex;
+            overflow-x: auto;
+            white-space: nowrap;
+            padding: 10px 0;
+            border-bottom: 1px solid #333;
+        }
+        .espn-game-card {
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1e1e1e;
+            padding: 10px 16px;
+            margin-right: 12px;
+            border-radius: 10px;
+            border: 1px solid #333;
+        }
+        .espn-team {
+            display: flex;
+            align-items: center;
+            width: 120px;
+            justify-content: space-between;
+            margin: 4px 0;
+        }
+        .espn-team img {
+            height: 26px;
+            width: 26px;
+        }
+        .espn-time {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+        .espn-record {
+            font-size: 12px;
+            color: #888;
+            margin-left: 6px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    html = '<div class="espn-banner-container">'
+
+    for game in scoreboard["events"]:
+        comp = game["competitions"][0]
+        status = game["status"]["type"]["shortDetail"]
+
+        # teams
+        t1 = comp["competitors"][0]
+        t2 = comp["competitors"][1]
+
+        def fmt_team(team):
+            return {
+                "name": team["team"]["abbreviation"],
+                "logo": team["team"]["logo"],
+                "record": team["records"][0]["summary"] if team.get("records") else "",
+            }
+
+        team1 = fmt_team(t1)
+        team2 = fmt_team(t2)
+
+        # time
+        start_time = datetime.fromisoformat(game["date"].replace("Z", "+00:00"))
+        est = start_time.astimezone(pytz.timezone("US/Eastern"))
+        time_str = est.strftime("%-I:%M %p ET")
+
+        html += f"""
+        <div class="espn-game-card">
+            <div class="espn-time">{time_str}</div>
+
+            <div class="espn-team">
+                <img src="{team1['logo']}">
+                <span>{team1['name']}</span>
+                <span class="espn-record">{team1['record']}</span>
+            </div>
+
+            <div class="espn-team">
+                <img src="{team2['logo']}">
+                <span>{team2['name']}</span>
+                <span class="espn-record">{team2['record']}</span>
+            </div>
+        </div>
+        """
+
+    html += "</div>"
+
+    st.markdown(html, unsafe_allow_html=True)
+    
 # =========================
 # PAGE CONFIG
 # =========================
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.title("🏀 NBA Player Prop Tools")
+
+# --- ESPN Date Selector ---
+today = datetime.now().date()
+dates = {
+    "Today": today,
+    "Tomorrow": today + timedelta(days=1),
+    "In 2 Days": today + timedelta(days=2),
+}
+
+chosen_label = st.selectbox(
+    "Games",
+    list(dates.keys()),
+    index=0,
+)
+
+chosen_date = dates[chosen_label].strftime("%Y%m%d")
+
+# --- Fetch ESPN games ---
+scoreboard = get_espn_scoreboard(chosen_date)
+
+# --- Render banner ---
+render_espn_banner(scoreboard)
+
+# Divider before your tabs
+st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
+
 
 # =========================
 # THEME / CSS
