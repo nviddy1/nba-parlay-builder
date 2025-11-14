@@ -691,7 +691,7 @@ def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, 
 </div>
 """
 
-def render_distribution_summary_card(mean_val, median_val, stdev, p10, p90, p_hit):
+def render_distribution_summary_card(mean, median, std, p10, p90, hit_pct):
     return f"""
 <style>
 .summary-card {{
@@ -702,24 +702,16 @@ def render_distribution_summary_card(mean_val, median_val, stdev, p10, p90, p_hi
     margin-top: 15px;
 }}
 .summary-title {{
-    font-size: 1.15rem;
-    font-weight: 700;
+    font-size: 1.2rem;
+    font-weight: 600;
     color: #d1fae5;
-    margin-bottom: 10px;
-}}
-.summary-grid {{
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
+    margin-bottom: 12px;
 }}
 .summary-item {{
-    background-color: #15342a;
-    padding: 12px 14px;
-    border-radius: 10px;
-    border: 1px solid #1e4d3b;
+    margin-bottom: 10px;
 }}
 .summary-label {{
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     color: #9ca3af;
 }}
 .summary-value {{
@@ -731,38 +723,35 @@ def render_distribution_summary_card(mean_val, median_val, stdev, p10, p90, p_hi
 
 <div class="summary-card">
     <div class="summary-title">📊 Distribution Summary</div>
-    <div class="summary-grid">
 
-        <div class="summary-item">
-            <div class="summary-label">Mean</div>
-            <div class="summary-value">{mean_val:.1f}</div>
-        </div>
+    <div class="summary-item">
+        <div class="summary-label">Mean</div>
+        <div class="summary-value">{mean:.1f}</div>
+    </div>
 
-        <div class="summary-item">
-            <div class="summary-label">Median</div>
-            <div class="summary-value">{median_val:.1f}</div>
-        </div>
+    <div class="summary-item">
+        <div class="summary-label">Median</div>
+        <div class="summary-value">{median:.1f}</div>
+    </div>
 
-        <div class="summary-item">
-            <div class="summary-label">Std Dev</div>
-            <div class="summary-value">{stdev:.2f}</div>
-        </div>
+    <div class="summary-item">
+        <div class="summary-label">Std Dev</div>
+        <div class="summary-value">{std:.2f}</div>
+    </div>
 
-        <div class="summary-item">
-            <div class="summary-label">10th Percentile</div>
-            <div class="summary-value">{p10:.1f}</div>
-        </div>
+    <div class="summary-item">
+        <div class="summary-label">10th Percentile</div>
+        <div class="summary-value">{p10:.1f}</div>
+    </div>
 
-        <div class="summary-item">
-            <div class="summary-label">90th Percentile</div>
-            <div class="summary-value">{p90:.1f}</div>
-        </div>
+    <div class="summary-item">
+        <div class="summary-label">90th Percentile</div>
+        <div class="summary-value">{p90:.1f}</div>
+    </div>
 
-        <div class="summary-item">
-            <div class="summary-label">Sim Hit %</div>
-            <div class="summary-value">{p_hit*100:.1f}%</div>
-        </div>
-
+    <div class="summary-item">
+        <div class="summary-label">Sim Hit %</div>
+        <div class="summary-value">{hit_pct*100:.1f}%</div>
     </div>
 </div>
 """
