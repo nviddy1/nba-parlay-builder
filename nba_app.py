@@ -691,50 +691,83 @@ def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, 
 </div>
 """
 
-def render_distribution_summary_card(mean, median, std, p10, p90, hit_pct):
+def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob):
     return f"""
 <style>
-.summary-card {{
+.mc-sum {{
     background-color: #0f291e;
     padding: 20px;
     border-radius: 12px;
     border: 1px solid #1e3a2f;
-    margin-top: 15px;
+    margin-top: 18px;
 }}
-.summary-item {{ margin-bottom: 12px; }}
-.summary-label {{ color: #9ca3af; font-size: 0.85rem; }}
-.summary-value {{ color: #f0fdf4; font-size: 1.1rem; font-weight: 600; }}
+
+.mc-sum-title {{
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #d1fae5;
+    margin-bottom: 12px;
+}}
+
+.mc-grid {{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+}}
+
+.mc-sbox {{
+    background-color: #15342a;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #1e4d3b;
+}}
+
+.mc-slab {{
+    font-size: 0.8rem;
+    color: #9ca3af;
+    margin-bottom: 4px;
+}}
+
+.mc-sval {{
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #f0fdf4;
+}}
 </style>
 
-<div class="summary-card">
-    <div class="summary-item">
-        <div class="summary-label">Mean</div>
-        <div class="summary-value">{mean:.1f}</div>
-    </div>
+<div class="mc-sum">
+    <div class="mc-sum-title">📊 Distribution Summary</div>
 
-    <div class="summary-item">
-        <div class="summary-label">Median</div>
-        <div class="summary-value">{median:.1f}</div>
-    </div>
+    <div class="mc-grid">
+        <div class="mc-sbox">
+            <div class="mc-slab">Mean</div>
+            <div class="mc-sval">{mean_val:.1f}</div>
+        </div>
 
-    <div class="summary-item">
-        <div class="summary-label">Std Dev</div>
-        <div class="summary-value">{std:.2f}</div>
-    </div>
+        <div class="mc-sbox">
+            <div class="mc-slab">Median</div>
+            <div class="mc-sval">{median_val:.1f}</div>
+        </div>
 
-    <div class="summary-item">
-        <div class="summary-label">10th Percentile</div>
-        <div class="summary-value">{p10:.1f}</div>
-    </div>
+        <div class="mc-sbox">
+            <div class="mc-slab">Std Dev</div>
+            <div class="mc-sval">{stdev:.2f}</div>
+        </div>
 
-    <div class="summary-item">
-        <div class="summary-label">90th Percentile</div>
-        <div class="summary-value">{p90:.1f}</div>
-    </div>
+        <div class="mc-sbox">
+            <div class="mc-slab">10th Percentile</div>
+            <div class="mc-sval">{p10:.1f}</div>
+        </div>
 
-    <div class="summary-item">
-        <div class="summary-label">Sim Hit %</div>
-        <div class="summary-value">{hit_pct*100:.1f}%</div>
+        <div class="mc-sbox">
+            <div class="mc-slab">90th Percentile</div>
+            <div class="mc-sval">{p90:.1f}</div>
+        </div>
+
+        <div class="mc-sbox">
+            <div class="mc-slab">Sim Hit %</div>
+            <div class="mc-sval">{hit_prob*100:.1f}%</div>
+        </div>
     </div>
 </div>
 """
@@ -1228,17 +1261,17 @@ with tab_mc:
         # ==========================================
         # ---------- Distribution Summary ----------
         # ==========================================
-        mean_val   = float(np.mean(draws))
+        mean_val = float(np.mean(draws))
         median_val = float(np.median(draws))
         p10 = float(np.percentile(draws, 10))
         p90 = float(np.percentile(draws, 90))
         stdev = float(np.std(draws))
 
         st.markdown(
-            render_distribution_summary_card(
+            render_mc_distribution_card(
                 mean_val, median_val, stdev, p10, p90, hit_prob
             ),
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
         # ==========================================
