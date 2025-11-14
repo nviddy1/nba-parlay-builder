@@ -194,7 +194,9 @@ def fetch_scoreboard_cached(date_str):
 scoreboard = fetch_scoreboard_cached(chosen_date)
 
 # --- Render banner ---
-render_espn_banner(scoreboard)
+banner = st.container()
+with banner:
+    render_espn_banner(scoreboard)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
