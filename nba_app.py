@@ -738,32 +738,32 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
         <div class="mc-sbox">
             <div class="mc-slab">Mean</div>
-            <div class="mc-sval">{{mean_val:.1f}}</div>
+            <div class="mc-sval">{mean_val:.1f}</div>
         </div>
 
         <div class="mc-sbox">
             <div class="mc-slab">Median</div>
-            <div class="mc-sval">{{median_val:.1f}}</div>
+            <div class="mc-sval">{median_val:.1f}</div>
         </div>
 
         <div class="mc-sbox">
             <div class="mc-slab">Std Dev</div>
-            <div class="mc-sval">{{stdev:.2f}}</div>
+            <div class="mc-sval">{stdev:.2f}</div>
         </div>
 
         <div class="mc-sbox">
             <div class="mc-slab">10th Percentile</div>
-            <div class="mc-sval">{{p10:.1f}}</div>
+            <div class="mc-sval">{p10:.1f}</div>
         </div>
 
         <div class="mc-sbox">
             <div class="mc-slab">90th Percentile</div>
-            <div class="mc-sval">{{p90:.1f}}</div>
+            <div class="mc-sval">{p90:.1f}</div>
         </div>
 
         <div class="mc-sbox">
             <div class="mc-slab">Sim Hit %</div>
-            <div class="mc-sval">{{hit_prob*100:.1f}}%</div>
+            <div class="mc-sval">{hit_prob*100:.1f}%</div>
         </div>
 
     </div>
@@ -771,6 +771,7 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 """
 
     return html
+
 
 
 
