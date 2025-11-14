@@ -833,7 +833,7 @@ with tab_breakeven:
                 st.table(pd.DataFrame(rows).set_index("Stat"))
 
 # =========================
-# TAB 3: HOT MATCHUPS (TEAM DEFENSIVE AVERAGES)
+# TAB 3: HOT MATCHUPS (TEAM DEFENSIVE AVERAGES — FIXED TEXT VISIBILITY)
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
@@ -855,21 +855,18 @@ def load_team_logs(season: str) -> pd.DataFrame:
         timeout=60
     ).get_data_frames()[0]
 
-    # numeric conversion
-    for k in ["PTS","REB","AST","FG3M"]:
+    for k in ["PTS", "REB", "AST", "FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
 
-    # extract opponent abbreviation
     df["OPP"] = (
         df["MATCHUP"].astype(str)
         .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
-        .bfill(axis=1).iloc[:,0]
+        .bfill(axis=1).iloc[:, 0]
     )
     return df
 
 def get_team_color(team_abbr):
-    """NBA primary color mapping (approx)"""
     color_map = {
         "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#000000", "CHA": "#1D1160", "CHI": "#CE1141",
         "CLE": "#860038", "DAL": "#00538C", "DEN": "#0E2240", "DET": "#C8102E", "GSW": "#1D428A",
@@ -881,14 +878,13 @@ def get_team_color(team_abbr):
     return color_map.get(team_abbr, "#999999")
 
 def soft_bg(hex_color, opacity=0.15):
-    """Generate a readable background color derived from team color."""
     try:
         rgba = mcolors.to_rgba(hex_color, opacity)
         return mcolors.to_hex(rgba)
     except Exception:
         return "#222222"
 
-# make sure this tab is part of your main definition:
+# integrate this tab with main: 
 # tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
 
 with tab_matchups:
@@ -918,16 +914,17 @@ with tab_matchups:
                 val = row[f"{stat}_ALLOWED_PER_GAME"]
                 color = get_team_color(team)
                 bg = soft_bg(color, 0.18)
-                text_shadow = f"0 0 6px {color}88"
+                border_color = color + "99"
                 st.markdown(
                     f"""
                     <div style='display:flex;align-items:center;justify-content:space-between;
-                                margin-bottom:4px;padding:5px 10px;border-radius:8px;
-                                background-color:{bg};'>
-                        <span style='font-weight:600;color:{color};font-size:1rem;text-shadow:{text_shadow};'>
-                            {team}
-                        </span>
-                        <span style='font-size:0.95rem;color:#e5e7eb;'>{val:.1f}</span>
+                                margin-bottom:5px;padding:6px 12px;border-radius:8px;
+                                background-color:{bg};
+                                border:1px solid {border_color};'>
+                        <span style='font-weight:700;color:#FFFFFF;font-size:1rem;
+                                     text-shadow:0 0 6px {color}99;'>{team}</span>
+                        <span style='font-size:0.95rem;color:#FFFFFF;font-weight:600;
+                                     text-shadow:0 0 6px {color}66;'>{val:.1f}</span>
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -935,3 +932,4 @@ with tab_matchups:
 
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
+
