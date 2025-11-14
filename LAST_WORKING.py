@@ -1071,11 +1071,11 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_mc, tab_injury, tab_matchups = st.tabs(
-    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "📊 Hot Matchups"]
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups = st.tabs(
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense"]
 )
 
-with tabs[4]:
+with tab_me:
     render_matchup_exploiter()
 
 # =========================
@@ -1804,10 +1804,13 @@ with tab_injury:
             )
             st.markdown(html, unsafe_allow_html=True)
 
+# =========================
+# TAB 5: MATCHUP EXPLOITER
+# =========================
 
             
 # =========================
-# TAB 5: HOT MATCHUPS (Team defensive averages)
+# TAB 6: TEAM DEFENSE
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
@@ -1862,7 +1865,7 @@ def soft_bg(hex_color, opacity=0.15):
 # tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
 
 with tab_matchups:
-    st.subheader("📈 Hot Matchups — Team Defensive Averages (Per Game)")
+    st.subheader("📈 Team Defense — Defensive Averages (Per Game)")
     st.caption("Based on NBA team game logs. Sorted from weakest (top) to strongest (bottom) defense.")
 
     season = get_current_season_str()

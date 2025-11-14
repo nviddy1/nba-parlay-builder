@@ -977,6 +977,19 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
     return html
 
+@st.cache_data
+def get_team_pace_table(season):
+    df = load_team_logs(season)
+    
+    # Estimate possessions
+    df["Poss"] = df["FGA"] + 0.44*df["FTA"] - df["OREB"] + df["TOV"]
+    
+    # Average pace per team (double because each game has 2 teams)
+    pace = df.groupby("TEAM_ABBREVIATION")["Poss"].mean() * 2
+    
+    pace_df = pace.reset_index().rename(columns={"Poss": "PACE"})
+    return pace_df
+
 def render_matchup_exploiter():
     st.markdown("""
     <style>
@@ -1022,30 +1035,85 @@ def render_matchup_exploiter():
 
     st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
 
-    # -----------------------------
-    # TEMP PREVIEW DATA
-    # We replace this with real logic after
-    # -----------------------------
-    matchups = [
-        {
-            "game": "GSW @ LAL",
-            "heat": 92,
-            "badges": ["Pace Up", "Weak Interior Defense", "High Usage Δ"],
-            "edges": [
-                "Stephen Curry — Assists Over (+12% edge)",
-                "LeBron James — Rebounds Over (+9% edge)",
-            ]
-        },
-        {
-            "game": "BOS @ PHX",
-            "heat": 87,
-            "badges": ["High Total", "Weak PnR Defense", "Injury Boost"],
-            "edges": [
-                "Jayson Tatum — Points Over (+15% edge)",
-                "Bradley Beal — Assists Over (+11% edge)",
-            ]
-        }
-    ]
+    season = get_current_season_str()
+
+    # Get defense and pace data
+    team_def = get_team_defense_table(season)
+    team_def = team_def.set_index("Team")
+
+    team_pace = get_team_pace_table(season)
+    team_pace = team_pace.set_index("TEAM_ABBREVIATION")
+
+    matchups = []
+
+    # Get today’s games from your ESPN banner (scoreboard is already loaded globally)
+    events = scoreboard.get("events", []) if scoreboard else []
+
+    for game in events:
+        comp = game["competitions"][0]
+        
+        away = comp["competitors"][0]["team"]["abbreviation"]
+        home = comp["competitors"][1]["team"]["abbreviation"]
+        
+        badges = []
+
+        # ---------------------------
+        # 1. Pace Differential
+        # ---------------------------
+        try:
+            pace_away = team_pace.loc[away, "PACE"]
+            pace_home = team_pace.loc[home, "PACE"]
+            pace_diff = pace_away - pace_home
+        except:
+            pace_diff = 0
+        
+        if pace_diff > 2:
+            badges.append("Pace Up 🔥")
+        elif pace_diff < -2:
+            badges.append("Pace Down ❄️")
+
+        # ---------------------------
+        # 2. Defense Weakness (DVP)
+        # ---------------------------
+        try:
+            reb_allowed = team_def.loc[home, "REB_allowed"]
+            ast_allowed = team_def.loc[home, "AST_allowed"]
+            threes_allowed = team_def.loc[home, "FG3M_allowed"]
+        except:
+            reb_allowed = ast_allowed = threes_allowed = 0
+
+        if reb_allowed >= team_def["REB_allowed"].quantile(0.75):
+            badges.append("Weak Rebound Defense 💧")
+        if ast_allowed >= team_def["AST_allowed"].quantile(0.75):
+            badges.append("Weak Assist Defense 🎯")
+        if threes_allowed >= team_def["FG3M_allowed"].quantile(0.75):
+            badges.append("Weak 3PT Defense 🔥")
+
+        # ---------------------------
+        # 3. Heat Score (0–100)
+        # ---------------------------
+        dvp_score = (
+            reb_allowed +
+            ast_allowed +
+            threes_allowed
+        ) / 3
+
+        heat = int(
+            40 * (pace_diff / 5) +
+            60 * (dvp_score / team_def["PTS_allowed"].max())
+        )
+        heat = max(0, min(100, heat))
+
+        # ---------------------------
+        # Add it to the list
+        # ---------------------------
+        matchups.append({
+            "game": f"{away} @ {home}",
+            "heat": heat,
+            "badges": badges,
+            "edges": []   # keep empty until we add prop edges
+        })
+
 
     for m in matchups:
         st.markdown(f"""
