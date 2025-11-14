@@ -93,30 +93,6 @@ def render_espn_banner(scoreboard):
             margin: 0 8px;
             white-space: nowrap;
         }
-        /* Style the selectbox to look like a game card */
-        .date-filter-card .stSelectbox > div > div > select {
-            background: #1e1e1e !important;
-            border: 1px solid #333 !important;
-            border-radius: 10px !important;
-            color: #fff !important;
-            font-size: 14px !important;
-            font-weight: bold !important;
-            text-align: center !important;
-            padding: 8px 12px !important;
-            min-width: 100px !important;
-            cursor: pointer !important;
-        }
-        .date-filter-card .stSelectbox > label {
-            display: none !important;
-        }
-        .date-filter-card {
-            background: #1e1e1e;
-            border-radius: 10px;
-            border: 1px solid #333;
-            padding: 4px;
-            margin-bottom: 0;
-            align-self: flex-start;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -200,17 +176,9 @@ def render_espn_banner(scoreboard):
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.markdown("🏀 NBA Player Prop Tools")
 
-# --- Date Selector styled as left card ---
+# --- Hardcoded to current day ---
 today = datetime.now().date()
-date_range = [
-    (today.strftime("%b %d"), today.strftime("%Y%m%d")),
-    ((today + timedelta(days=1)).strftime("%b %d"), (today + timedelta(days=1)).strftime("%Y%m%d")),
-    ((today + timedelta(days=2)).strftime("%b %d"), (today + timedelta(days=2)).strftime("%Y%m%d")),
-]
-date_labels = [label for label, _ in date_range]
-date_dict = {label: date_str for label, date_str in date_range}
-chosen_label = st.selectbox("", options=date_labels, index=0, key="date_filter", help=None)
-chosen_date = date_dict[chosen_label]
+chosen_date = today.strftime("%Y%m%d")
 
 # --- Fetch ESPN games ---
 @st.cache_data(ttl=300)  # Cache for 5 min to avoid API hammering
@@ -219,7 +187,7 @@ def fetch_scoreboard_cached(date_str):
 
 scoreboard = fetch_scoreboard_cached(chosen_date)
 
-# --- Render banner (games only) ---
+# --- Render banner ---
 render_espn_banner(scoreboard)
 
 # Divider before your tabs
