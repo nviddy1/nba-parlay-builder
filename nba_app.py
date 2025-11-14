@@ -1067,7 +1067,7 @@ with tab_injury:
     colL, colR = st.columns([1.2, 2])
 
     # --------------------------
-    # LEFT SIDE CONTROLS
+    # LEFT-SIDE CONTROLS
     # --------------------------
     with colL:
         season_inj = st.selectbox(
@@ -1077,7 +1077,11 @@ with tab_injury:
             key="season_inj"
         )
 
-        team_inj = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHX") if "PHX" in TEAM_ABBRS else 0)
+        team_inj = st.selectbox(
+            "Team",
+            TEAM_ABBRS,
+            index=TEAM_ABBRS.index("PHX") if "PHX" in TEAM_ABBRS else 0
+        )
 
         roster_df = get_team_roster(season_inj, team_inj)
 
@@ -1098,15 +1102,15 @@ with tab_injury:
         stat_inj = st.selectbox("Stat", ["PTS","REB","AST","PRA"], index=0, key="stat_inj")
 
         min_games_without = st.slider(
-            "Min games without to include", 
-            1, 15, 3, 1, 
+            "Min games without to include",
+            1, 15, 3, 1,
             key="min_g_without"
         )
 
         run_inj = st.button("Analyze Impact", key="run_inj")
 
     # --------------------------
-    # RIGHT SIDE RESULTS
+    # RIGHT-SIDE OUTPUT
     # --------------------------
     with colR:
         if run_inj:
@@ -1121,7 +1125,7 @@ with tab_injury:
                 st.warning("No logs for this team/season.")
                 st.stop()
 
-            # Build PRA column when needed
+            # Build PRA when needed
             if stat_inj == "PRA":
                 team_logs["PRA"] = (
                     team_logs["PTS"].fillna(0)
@@ -1129,10 +1133,10 @@ with tab_injury:
                     + team_logs["AST"].fillna(0)
                 )
 
-            # Games where injured player played
+            # Games WITH injured player
             inj_logs = team_logs[team_logs["PLAYER_ID"] == injured_id]
             if inj_logs.empty:
-                st.warning(f"{injured_name} has no games logged for this season.")
+                st.warning(f"{injured_name} has no logged games this season.")
                 st.stop()
 
             games_with = set(inj_logs["GAME_ID"].unique())
@@ -1140,16 +1144,16 @@ with tab_injury:
             games_without = all_games - games_with
 
             if not games_without:
-                st.warning(f"No games found for {team_inj} without {injured_name}.")
+                st.warning(f"No games where {injured_name} was OUT.")
                 st.stop()
 
-            # Teammate stats WITH injured player
+            # Teammates WITH
             with_df = team_logs[
                 (team_logs["GAME_ID"].isin(games_with)) &
                 (team_logs["PLAYER_ID"] != injured_id)
             ].copy()
 
-            # Teammate stats WITHOUT injured player
+            # Teammates WITHOUT
             without_df = team_logs[
                 (team_logs["GAME_ID"].isin(games_without)) &
                 (team_logs["PLAYER_ID"] != injured_id)
@@ -1161,6 +1165,7 @@ with tab_injury:
             g_without = without_df.groupby("PLAYER_ID")[stat_col].mean()
             n_without = without_df.groupby("PLAYER_ID")["GAME_ID"].nunique()
 
+            # Build rows
             rows = []
             idx = sorted(set(g_with.index) | set(g_without.index))
 
@@ -1169,7 +1174,6 @@ with tab_injury:
                 wo = g_without.get(pid, np.nan)
                 nwo = int(n_without.get(pid, 0))
 
-                # Respect min games filter
                 if nwo < min_games_without:
                     continue
 
@@ -1186,68 +1190,83 @@ with tab_injury:
                 })
 
             if not rows:
-                st.warning("No teammates met the minimum games without filter.")
+                st.warning("No players met the filters.")
                 st.stop()
 
-            # Build final DataFrame
             impact_df = pd.DataFrame(rows)
             impact_df = impact_df.sort_values("Delta", ascending=False).reset_index(drop=True)
 
             # --------------------------
-            # PRETTY DARK-STYLED TABLE
+            # BUILD BEAUTIFUL HTML TABLE (NO INDEX)
             # --------------------------
 
-            def style_injury_table(df):
-                # Base dark styling
-                styles = [
-                    dict(selector="th", props=[
-                        ("background-color", "#1f2125"),
-                        ("color", "#f9fafb"),
-                        ("font-size", "0.9rem"),
-                        ("font-weight", "700"),
-                        ("border-bottom", "1px solid #333")
-                    ]),
-                    dict(selector="tr", props=[
-                        ("border-bottom", "1px solid #2a2d31")
-                    ]),
-                    dict(selector="td", props=[
-                        ("background-color", "#131417"),
-                        ("color", "#e5e7eb"),
-                        ("font-size", "0.9rem"),
-                        ("padding", "8px 10px")
-                    ]),
-                    dict(selector="table", props=[
-                        ("border-collapse", "collapse"),
-                        ("border-radius", "8px"),
-                        ("overflow", "hidden"),
-                        ("margin-top", "8px")
-                    ])
-                ]
+            # Color delta cells
+            def apply_delta_color(val):
+                if val > 0:
+                    return "color:#7CFCBE; font-weight:700;"
+                elif val < 0:
+                    return "color:#FF6B6B; font-weight:700;"
+                else:
+                    return "color:#e5e7eb;"
 
-                styler = df.style.set_table_styles(styles)
+            html = """
+            <style>
+                table.custom-table {
+                    border-collapse: collapse;
+                    width: 100%;
+                    border-radius: 10px;
+                    overflow: hidden;
+                    margin-top: 10px;
+                }
+                table.custom-table th {
+                    background-color: #1f2125;
+                    color: #f9fafb;
+                    padding: 10px;
+                    font-weight: 700;
+                    font-size: 0.9rem;
+                    border-bottom: 1px solid #333;
+                }
+                table.custom-table td {
+                    background-color: #131417;
+                    color: #e5e7eb;
+                    padding: 8px 10px;
+                    border-bottom: 1px solid #2a2d31;
+                    font-size: 0.9rem;
+                }
+            </style>
+            <table class="custom-table">
+                <thead>
+                    <tr>
+            """
 
-                # Color deltas green/red
-                def color_delta(v):
-                    if v > 0:
-                        return "color:#7CFCBE; font-weight:700;"
-                    elif v < 0:
-                        return "color:#FF6B6B; font-weight:700;"
-                    return "color:#f9fafb;"
+            # Build header row
+            for col in impact_df.columns:
+                html += f"<th>{col}</th>"
+            html += "</tr></thead><tbody>"
 
-                # Format numeric columns
-                styler = styler.format({
-                    f"{stat_col} w/ {injured_name}": "{:.1f}",
-                    f"{stat_col} w/o {injured_name}": "{:.1f}",
-                    "Delta": "{:+.1f}"
-                })
+            # Build rows
+            for _, row in impact_df.iterrows():
+                html += "<tr>"
+                for col in impact_df.columns:
+                    val = row[col]
+                    if col == "Delta":
+                        style = apply_delta_color(val)
+                        html += f"<td style='{style}'>{val:+.1f}</td>"
+                    elif isinstance(val, float):
+                        html += f"<td>{val:.1f}</td>"
+                    else:
+                        html += f"<td>{val}</td>"
+                html += "</tr>"
 
-                styler = styler.applymap(color_delta, subset=["Delta"])
+            html += "</tbody></table>"
 
-                return styler.hide(axis="index")
+            st.caption(
+                f"Positive Delta = player gains production when **{injured_name}** is OUT."
+            )
+            st.markdown(html, unsafe_allow_html=True)
 
-            st.caption(f"Positive Delta = player gains production when **{injured_name}** is OUT.")
-            st.dataframe(style_injury_table(impact_df), use_container_width=True)
 
+            
 # =========================
 # TAB 5: HOT MATCHUPS (Team defensive averages)
 # =========================
