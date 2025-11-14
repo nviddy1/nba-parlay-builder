@@ -14,7 +14,7 @@ from datetime import datetime
 @st.cache_data(ttl=300)
 def get_espn_games(date_str):
     """Return ESPN-style scoreboard data for a given YYYY-MM-DD date."""
-    url = f"https://site.web.api.espn.com/apis/v2/sports/basketball/nba/scoreboard?dates={date_str}"
+    url = f"https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/scoreboard?dates={date_str}"
     r = requests.get(url, timeout=10)
     
     if r.status_code != 200:
