@@ -123,7 +123,7 @@ def render_espn_banner(scoreboard):
 # PAGE CONFIG
 # =========================
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
-st.title("🏀 NBA Player Prop Tools")
+st.markdown("🏀 NBA Player Prop Tools")
 
 # --- ESPN Date Selector ---
 today = datetime.now().date()
