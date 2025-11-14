@@ -782,6 +782,60 @@ NBA_CUP_DATES = pd.to_datetime([
     # For 2025-26 season, placeholder empty for now
 ])
 
+games = get_today_games()
+
+st.markdown("""
+<style>
+.game-scroll {
+    display: flex;
+    overflow-x: auto;
+    gap: 14px;
+    padding: 10px 4px;
+    scrollbar-width: none;
+}
+.game-scroll::-webkit-scrollbar { display: none; }
+
+.game-card {
+    background: #1e1f22;
+    border: 1px solid #333;
+    border-radius: 14px;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+    box-shadow: 0 0 12px rgba(0,0,0,0.3);
+}
+.team-logo {
+    width: 22px;
+}
+.game-time {
+    color: #9ca3af;
+    font-size: 0.85rem;
+    margin-right: 4px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+if games:
+    st.markdown('<div class="game-scroll">', unsafe_allow_html=True)
+    for g in games:
+        st.markdown(f"""
+        <div class="game-card">
+            <span class="game-time">{g['time']}</span>
+            <img class="team-logo" src="{g['away_logo']}">
+            <strong>{g['away']}</strong>
+            <span>@</span>
+            <img class="team-logo" src="{g['home_logo']}">
+            <strong>{g['home']}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+else:
+    st.warning("No games scheduled today.")
+
+
 # =========================
 # TABS
 # =========================

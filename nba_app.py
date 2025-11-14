@@ -9,32 +9,38 @@ from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
-import datetime
+from datetime import datetime
+import pytz
 
-@st.cache_data(ttl=300)
-def get_today_games():
-    today = datetime.date.today().strftime("%Y%m%d")
-    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={today}"
+def get_today_games(date=None):
+    """Scrape ESPN scoreboard for a given date (defaults to today)."""
+    if date is None:
+        date = datetime.now().strftime("%Y%m%d")
 
-    try:
-        events = requests.get(url, timeout=10).json().get("events", [])
-    except:
-        return []
+    url = f"https://site.web.api.espn.com/apis/v2/sports/basketball/nba/scoreboard?dates={date}"
+    data = requests.get(url).json()
 
     games = []
-    for game in events:
-        comp = game["competitions"][0]
-        teams = comp["competitors"]
+    eastern = pytz.timezone("US/Eastern")
+    local_tz = pytz.timezone("US/Eastern")  # change if needed
 
-        away = [t for t in teams if t["homeAway"] == "away"][0]
-        home = [t for t in teams if t["homeAway"] == "home"][0]
+    for ev in data.get("events", []):
+        comp = ev["competitions"][0]
+
+        # Time conversion
+        utc_time = datetime.fromisoformat(comp["date"].replace("Z", "+00:00"))
+        et_time = utc_time.astimezone(eastern)
+        display_time = et_time.strftime("%-I:%M %p")
+
+        home = comp["competitors"][0]
+        away = comp["competitors"][1]
 
         games.append({
-            "away": away["team"]["abbreviation"],
-            "away_logo": away["team"].get("logo"),
+            "time": display_time,
             "home": home["team"]["abbreviation"],
-            "home_logo": home["team"].get("logo"),
-            "tipoff": game["date"],  # full datetime
+            "home_logo": home["team"]["logo"],
+            "away": away["team"]["abbreviation"],
+            "away_logo": away["team"]["logo"],
         })
 
     return games
