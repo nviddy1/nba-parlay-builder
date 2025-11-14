@@ -471,7 +471,7 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
+tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
 
 # =========================
 # TAB 1: PARLAY BUILDER
@@ -831,3 +831,105 @@ with tab_breakeven:
                         "Under": f"{out['under_prob']*100:.1f}% ({out['under_odds']})"
                     })
                 st.table(pd.DataFrame(rows).set_index("Stat"))
+
+# =========================
+# TAB 3: HOT MATCHUPS (TEAM DEFENSIVE AVERAGES — FIXED TEXT VISIBILITY)
+# =========================
+from nba_api.stats.endpoints import leaguegamelog
+from datetime import datetime
+import matplotlib.colors as mcolors
+
+@st.cache_data(show_spinner=False)
+def get_current_season_str():
+    now = datetime.now()
+    year = now.year if now.month >= 8 else now.year - 1
+    return f"{year}-{str(year+1)[-2:]}"
+
+@st.cache_data(show_spinner=True)
+def load_team_logs(season: str) -> pd.DataFrame:
+    """Fetch team-level game logs (one row per team per game)."""
+    df = leaguegamelog.LeagueGameLog(
+        season=season,
+        season_type_all_star="Regular Season",
+        player_or_team_abbreviation="T",
+        timeout=60
+    ).get_data_frames()[0]
+
+    for k in ["PTS", "REB", "AST", "FG3M"]:
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
+
+    df["OPP"] = (
+        df["MATCHUP"].astype(str)
+        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1).iloc[:, 0]
+    )
+    return df
+
+def get_team_color(team_abbr):
+    color_map = {
+        "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#000000", "CHA": "#1D1160", "CHI": "#CE1141",
+        "CLE": "#860038", "DAL": "#00538C", "DEN": "#0E2240", "DET": "#C8102E", "GSW": "#1D428A",
+        "HOU": "#CE1141", "IND": "#002D62", "LAC": "#C8102E", "LAL": "#552583", "MEM": "#5D76A9",
+        "MIA": "#98002E", "MIL": "#00471B", "MIN": "#0C2340", "NOP": "#0C2340", "NYK": "#006BB6",
+        "OKC": "#007AC1", "ORL": "#0077C0", "PHI": "#006BB6", "PHX": "#E56020", "POR": "#E03A3E",
+        "SAC": "#5A2D81", "SAS": "#C4CED4", "TOR": "#CE1141", "UTA": "#002B5C", "WAS": "#002B5C"
+    }
+    return color_map.get(team_abbr, "#999999")
+
+def soft_bg(hex_color, opacity=0.15):
+    try:
+        rgba = mcolors.to_rgba(hex_color, opacity)
+        return mcolors.to_hex(rgba)
+    except Exception:
+        return "#222222"
+
+# integrate this tab with main: 
+# tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
+
+with tab_matchups:
+    st.subheader("📈 Hot Matchups — Team Defensive Averages (Per Game)")
+    st.caption("Based on NBA team game logs. Sorted from weakest (top) to strongest (bottom) defense.")
+
+    season = get_current_season_str()
+    df = load_team_logs(season)
+    if df.empty:
+        st.warning("No data yet for this season.")
+        st.stop()
+
+    stats = ["PTS", "REB", "AST", "FG3M"]
+    cols = st.columns(len(stats))
+
+    for i, stat in enumerate(stats):
+        allowed = (
+            df.groupby("OPP", as_index=False)[stat]
+            .mean()
+            .rename(columns={stat: f"{stat}_ALLOWED_PER_GAME"})
+        )
+        allowed = allowed.sort_values(f"{stat}_ALLOWED_PER_GAME", ascending=False)
+        with cols[i]:
+            st.markdown(f"### {stat} Allowed / Game")
+            for _, row in allowed.iterrows():
+                team = row["OPP"]
+                val = row[f"{stat}_ALLOWED_PER_GAME"]
+                color = get_team_color(team)
+                bg = soft_bg(color, 0.18)
+                border_color = color + "99"
+                st.markdown(
+                    f"""
+                    <div style='display:flex;align-items:center;justify-content:space-between;
+                                margin-bottom:5px;padding:6px 12px;border-radius:8px;
+                                background-color:{bg};
+                                border:1px solid {border_color};'>
+                        <span style='font-weight:700;color:#FFFFFF;font-size:1rem;
+                                     text-shadow:0 0 6px {color}99;'>{team}</span>
+                        <span style='font-size:0.95rem;color:#FFFFFF;font-weight:600;
+                                     text-shadow:0 0 6px {color}66;'>{val:.1f}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+    st.divider()
+    st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
+
