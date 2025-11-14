@@ -1075,6 +1075,9 @@ tab_builder, tab_breakeven, tab_mc, tab_injury, tab_matchups = st.tabs(
     ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "📊 Hot Matchups"]
 )
 
+with tabs[4]:
+    render_matchup_exploiter()
+
 # =========================
 # TAB 1: PARLAY BUILDER
 # =========================
