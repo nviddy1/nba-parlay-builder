@@ -8,6 +8,99 @@ from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
+from nba_api.live.nba.endpoints import scoreboard
+import streamlit as st
+from nba_api.live.nba.endpoints import scoreboard
+from datetime import datetime, timedelta
+import pytz
+
+# ----------------------------
+# TODAY'S GAMES ESPN-STYLE BANNER
+# ----------------------------
+
+def get_scoreboard_for_date(date):
+    """Returns scoreboard object for a given date."""
+    datestring = date.strftime("%Y-%m-%d")
+    try:
+        games = scoreboard.ScoreBoard(game_date=datestring).games.get_dict()
+        return games
+    except:
+        return []
+
+
+def render_games_banner(games):
+    """Display ESPN-style horizontal game banner."""
+    if not games:
+        st.info("No games scheduled for this date.")
+        return
+
+    st.markdown(
+        """
+        <style>
+        .game-strip {
+            display: flex;
+            overflow-x: auto;
+            gap: 18px;
+            padding: 10px 0px;
+            margin-bottom: 15px;
+        }
+        .game-card {
+            flex: 0 0 auto;
+            padding: 12px 18px;
+            border-radius: 12px;
+            background-color: #111111;
+            border: 1px solid #333;
+            min-width: 170px;
+            text-align: center;
+        }
+        .team-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    html = '<div class="game-strip">'
+
+    for g in games:
+        home = g["homeTeam"]
+        away = g["awayTeam"]
+
+        # tipoff time
+        tip = g["gameClock"]
+        gametime = g["gameTimeUTC"]
+        gametime_local = datetime.fromisoformat(gametime.replace("Z", "+00:00")).astimezone(pytz.timezone("US/Eastern"))
+        tipstr = gametime_local.strftime("%-I:%M %p ET")
+
+        html += f"""
+        <div class="game-card">
+            <div style="font-size:13px; opacity:0.7;">{tipstr}</div>
+
+            <div class="team-line">
+                <span>{away['teamTricode']}</span>
+                <span>{away['wins']}-{away['losses']}</span>
+            </div>
+            <div class="team-line">
+                <span>{home['teamTricode']}</span>
+                <span>{home['wins']}-{home['losses']}</span>
+            </div>
+        </div>
+        """
+
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# DATE PICKER FOR BANNER
+today = datetime.now().date()
+banner_date = st.date_input("Select Date", today, key="games_banner_date")
+
+games_today = get_scoreboard_for_date(banner_date)
+render_games_banner(games_today)
 
 
 # =========================
