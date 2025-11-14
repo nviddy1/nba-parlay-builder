@@ -721,6 +721,41 @@ def get_league_player_logs(season: str) -> pd.DataFrame:
     )
     return df
 
+def compute_matchup_edges(season: str) -> pd.DataFrame:
+    """Returns player-level production vs opponent defensive averages."""
+    logs = get_league_player_logs(season)
+    if logs.empty:
+        return pd.DataFrame()
+
+    # Aggregate player averages
+    player_avg = (
+        logs.groupby(["PLAYER_ID", "PLAYER_NAME", "TEAM_ABBREVIATION", "OPP"])[
+            ["PTS", "REB", "AST", "FG3M"]
+        ].mean()
+        .reset_index()
+    )
+
+    # Team defense table
+    team_def = get_team_defense_table(season)
+    team_def = team_def.rename(columns={
+        "Team": "OPP",
+        "PTS_allowed": "PTS_allowed",
+        "REB_allowed": "REB_allowed",
+        "AST_allowed": "AST_allowed",
+        "FG3M_allowed": "FG3M_allowed",
+    })
+
+    # Merge player averages + what opponent allows
+    merged = pd.merge(player_avg, team_def, on="OPP", how="left")
+
+    # Compute edges (player avg - opponent allowed)
+    merged["PTS_edge"] = merged["PTS"] - merged["PTS_allowed"]
+    merged["REB_edge"] = merged["REB"] - merged["REB_allowed"]
+    merged["AST_edge"] = merged["AST"] - merged["AST_allowed"]
+    merged["FG3M_edge"] = merged["FG3M"] - merged["FG3M_allowed"]
+
+    return merged
+
 
 @st.cache_data(show_spinner=False)
 def get_team_defense_table(season: str) -> pd.DataFrame:
@@ -1721,6 +1756,54 @@ with tab_injury:
 # =========================
 # TAB 5: MATCHUP EXPLOITER
 # =========================
+
+with tab_me:
+    st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
+
+    season = get_current_season_str()
+
+    st.caption(f"Season: {season}")
+
+    df = compute_matchup_edges(season)
+    if df.empty:
+        st.warning("No data available yet for this season.")
+        st.stop()
+
+    st.write("### Filter by Stat")
+    stat_choice = st.selectbox("Stat", ["PTS", "REB", "AST", "FG3M"], index=0)
+
+    edge_col = f"{stat_choice}_edge"
+
+    # Sort by highest positive edge
+    df_sorted = df.sort_values(edge_col, ascending=False)
+
+    top10 = df_sorted.head(12)
+
+    for _, row in top10.iterrows():
+        player = row["PLAYER_NAME"]
+        team = row["TEAM_ABBREVIATION"]
+        opp = row["OPP"]
+        edge = row[edge_col]
+        avg_stat = row[stat_choice]
+        opp_allowed = row[f"{stat_choice}_allowed"]
+
+        st.markdown(f"""
+        <div style="padding:12px;border-radius:10px;margin-bottom:10px;
+            background:#1a1b1f;border:1px solid #333;">
+            <div style="font-size:1.2rem;font-weight:700;margin-bottom:4px;">
+                {player} ({team}) vs {opp}
+            </div>
+            <div style="color:#ccc;">
+                <strong>{stat_choice} Avg:</strong> {avg_stat:.1f} &nbsp;|&nbsp;
+                <strong>Opp Allows:</strong> {opp_allowed:.1f} &nbsp;|&nbsp;
+                <strong>Edge:</strong> <span style="color:{'#00c896' if edge > 0 else '#ff6b6b'};">
+                    {edge:+.2f}
+                </span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.caption("Higher positive ‘edge’ means player exceeds the opponent’s defensive average.")
 
             
 # =========================
