@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
+from nba_api.stats.static import teams as teams_static
+from nba_api.stats.endpoints import leaguegamelog, commonteamroster
+
 
 # =========================
 # PAGE CONFIG
@@ -461,6 +464,128 @@ def sparkline(values, thr):
     img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return f'<img src="data:image/png;base64,{img_b64}" style="width:100%;height:22px;opacity:0.9;" />'
 
+# -------------------------
+# Team constants & colors
+# -------------------------
+TEAM_COLORS = {
+    "ATL": "#E03A3E","BOS": "#007A33","BKN": "#000000","CHA": "#1D1160","CHI": "#CE1141",
+    "CLE": "#860038","DAL": "#00538C","DEN": "#0E2240","DET": "#C8102E","GSW": "#1D428A",
+    "HOU": "#CE1141","IND": "#002D62","LAC": "#C8102E","LAL": "#552583","MEM": "#5D76A9",
+    "MIA": "#98002E","MIL": "#00471B","MIN": "#0C2340","NOP": "#0C2340","NYK": "#F58426",
+    "OKC": "#007AC1","ORL": "#0077C0","PHI": "#006BB6","PHX": "#1D1160","POR": "#E03A3E",
+    "SAC": "#5A2D81","SAS": "#C4CED4","TOR": "#CE1141","UTA": "#002B5C","WAS": "#002B5C"
+}
+TEAM_ABBRS = sorted(TEAM_COLORS.keys())
+
+
+def lighten_hex(color: str, factor: float = 0.35) -> str:
+    """Slightly lighten a hex color so the text pops more."""
+    color = color.lstrip("#")
+    r = int(color[0:2], 16)
+    g = int(color[2:4], 16)
+    b = int(color[4:6], 16)
+    r = int(r + (255 - r) * factor)
+    g = int(g + (255 - g) * factor)
+    b = int(b + (255 - b) * factor)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# -------------------------
+# League logs (player-level)
+# -------------------------
+@st.cache_data(show_spinner=False)
+def get_league_player_logs(season: str) -> pd.DataFrame:
+    """All player game logs for a season (used for Hot Matchups & Injury Impact)."""
+    df = leaguegamelog.LeagueGameLog(
+        season=season,
+        season_type_all_star="Regular Season",
+        player_or_team_abbreviation="P",
+    ).get_data_frames()[0]
+
+    for col in ["PTS", "REB", "AST", "STL", "BLK", "FG3M"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # opponent team abbrev from MATCHUP (same regex you used before)
+    df["OPP"] = (
+        df["MATCHUP"]
+        .astype(str)
+        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1)
+        .iloc[:, 0]
+    )
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def get_team_defense_table(season: str) -> pd.DataFrame:
+    """
+    Returns per-game averages allowed by each team:
+    PTS, REB, AST, FG3M allowed.
+    """
+    df = get_league_player_logs(season)
+    # Sum all opponent players per game, then average by opponent team
+    tmp = (
+        df.groupby(["OPP", "GAME_ID"])[["PTS", "REB", "AST", "FG3M"]]
+        .sum()
+        .reset_index()
+    )
+    agg = (
+        tmp.groupby("OPP")[["PTS", "REB", "AST", "FG3M"]]
+        .mean()
+        .reset_index()
+        .rename(columns={
+            "OPP": "Team",
+            "PTS": "PTS_allowed",
+            "REB": "REB_allowed",
+            "AST": "AST_allowed",
+            "FG3M": "FG3M_allowed",
+        })
+    )
+    return agg
+
+
+@st.cache_data(show_spinner=False)
+def get_team_roster(season: str, team_abbrev: str) -> pd.DataFrame:
+    """Return roster (PLAYER_ID, PLAYER) for a team in a given season."""
+    team_meta = [t for t in teams_static.get_teams() if t["abbreviation"] == team_abbrev]
+    if not team_meta:
+        return pd.DataFrame(columns=["PLAYER_ID", "PLAYER"])
+    team_id = team_meta[0]["id"]
+    roster_df = commonteamroster.CommonTeamRoster(
+        team_id=team_id,
+        season=season
+    ).get_data_frames()[0]
+    return roster_df[["PLAYER_ID", "PLAYER"]]
+
+
+def style_def_table(df: pd.DataFrame, stat_col: str):
+    """Nice colored table for Hot Matchups."""
+    def row_style(row):
+        team = row["Team"]
+        base = TEAM_COLORS.get(team, "#111827")
+        bg_team = lighten_hex(base, 0.4)
+        bg_val = "#020617"
+        return [
+            f"background-color:{bg_team}; color:#f9fafb; font-weight:700; text-align:left;",
+            f"background-color:{bg_val}; color:#f9fafb; text-align:right;"
+        ]
+
+    return (
+        df.style.hide(axis="index")
+        .format({stat_col: "{:.1f}"})
+        .apply(row_style, axis=1)
+    )
+
+
+def monte_carlo_sim(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
+    """Bootstrap Monte Carlo from historical stat series."""
+    vals = pd.to_numeric(series, errors="coerce").dropna().values
+    if len(vals) == 0:
+        return np.array([])
+    return np.random.choice(vals, size=n_sims, replace=True)
+
+
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
     # Add actual NBA In-Season Tournament dates here, e.g.,
@@ -471,7 +596,9 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_matchups = st.tabs(
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "📊 Hot Matchups"]
+)
 
 # =========================
 # TAB 1: PARLAY BUILDER
@@ -833,7 +960,294 @@ with tab_breakeven:
                 st.table(pd.DataFrame(rows).set_index("Stat"))
 
 # =========================
-# TAB 3: HOT MATCHUPS (TEAM DEFENSIVE AVERAGES — FIXED TEXT VISIBILITY)
+# TAB 3: MONTE CARLO PROP SIMULATOR
+# =========================
+with tab_mc:
+    st.subheader("🎲 Monte Carlo Prop Simulator")
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        mc_text = st.text_input(
+            "Prop (e.g., 'Maxey O 24.5 PTS Away')",
+            key="mc_input",
+            placeholder="Player O/U Line Stat ..."
+        )
+        seasons_mc = st.multiselect(
+            "Seasons",
+            ["2025-26","2024-25","2023-24","2022-23"],
+            default=["2025-26","2024-25"],
+            key="seasons_mc"
+        )
+        last_n_mc = st.slider("Last N Games", 5, 100, 20, 1, key="lastn_mc")
+        min_min_mc = st.slider("Min Minutes", 0, 40, 20, 1, key="min_mc")
+        loc_mc = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="loc_mc")
+
+    with c2:
+        odds_mc = st.number_input("Sportsbook Odds (e.g., -110)", value=-110, step=5, key="odds_mc")
+        sims_mc = st.slider("Number of Simulations", 1000, 20000, 10000, 1000, key="sims_mc")
+
+    if st.button("Run Simulation", key="run_mc") and mc_text.strip():
+        parsed = parse_input_line(mc_text)
+        if not parsed or not parsed["player"]:
+            st.warning("Could not parse player / stat from input.")
+        else:
+            pid = get_player_id(parsed["player"])
+            if not pid:
+                st.warning("Could not find that player in the NBA database.")
+            else:
+                df = fetch_gamelog(pid, seasons_mc, include_playoffs=False, only_playoffs=False)
+                d = df.copy()
+                d = d[d["MIN_NUM"] >= min_min_mc]
+                if loc_mc == "Home Only":
+                    d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+                elif loc_mc == "Away":
+                    d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
+                d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
+
+                ser = compute_stat_series(d, parsed["stat"])
+                draws = monte_carlo_sim(ser, n_sims=sims_mc)
+                if draws.size == 0:
+                    st.warning("No valid stat data to simulate from.")
+                else:
+                    thr = parsed["thr"]
+                    direction = parsed["dir"]
+                    if direction == "Under":
+                        p_hit = float((draws <= thr).mean())
+                    else:
+                        p_hit = float((draws >= thr).mean())
+
+                    fair_odds = prob_to_american(p_hit)
+                    book_prob = american_to_implied(odds_mc)
+                    ev_pct = None
+                    if book_prob is not None:
+                        ev_pct = (p_hit - book_prob) * 100.0
+
+                    stat_label = STAT_LABELS.get(parsed["stat"], parsed["stat"])
+                    dir_short = "O" if direction == "Over" else "U"
+                    hit_str = f"{p_hit*100:.1f}%"
+                    ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
+
+                    cls = "neutral"
+                    if ev_pct is not None:
+                        cls = "pos" if ev_pct >= 0 else "neg"
+
+                    st.markdown(f"""
+<div class="card {cls}">
+  <h2>🎲 Monte Carlo Result</h2>
+  <div class="cond">
+    {parsed["player"]} — {dir_short} {fmt_half(thr)} {stat_label} ({loc_mc}, last {last_n_mc} games)
+  </div>
+  <div class="row">
+    <div class="m"><div class="lab">Sim Hit Probability</div><div class="val">{hit_str}</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{fair_odds}</div></div>
+    <div class="m"><div class="lab">Book Odds</div><div class="val">{odds_mc}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_str}</div></div>
+  </div>
+  <div style="margin-top:10px;">
+    <span class="chip">{('🔥 +EV (Monte Carlo)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV by simulation')}</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+                    # Histogram
+                    fig, ax = plt.subplots(figsize=(6, 3))
+                    ax.hist(draws, bins=20, alpha=0.85)
+                    ax.axvline(thr, color="red", linestyle="--", linewidth=1.5)
+                    ax.set_xlabel(stat_label)
+                    ax.set_ylabel("Simulated frequency")
+                    st.pyplot(fig, use_container_width=True)
+
+
+# =========================
+# TAB 4: INJURY IMPACT ANALYZER
+# =========================
+with tab_injury:
+    st.subheader("🩹 Injury Impact Analyzer")
+
+    colL, colR = st.columns([1.2, 2])
+
+    # --------------------------
+    # LEFT SIDE CONTROLS
+    # --------------------------
+    with colL:
+        season_inj = st.selectbox(
+            "Season",
+            ["2025-26","2024-25","2023-24"],
+            index=1,
+            key="season_inj"
+        )
+
+        team_inj = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHX") if "PHX" in TEAM_ABBRS else 0)
+
+        roster_df = get_team_roster(season_inj, team_inj)
+
+        if roster_df.empty:
+            st.warning("Could not load roster for this team/season.")
+            injured_name = None
+            injured_id = None
+        else:
+            injured_name = st.selectbox(
+                "Injured / Missing Player",
+                roster_df["PLAYER"].tolist(),
+                key="inj_player"
+            )
+            injured_id = int(
+                roster_df.loc[roster_df["PLAYER"] == injured_name, "PLAYER_ID"].iloc[0]
+            ) if injured_name else None
+
+        stat_inj = st.selectbox("Stat", ["PTS","REB","AST","PRA"], index=0, key="stat_inj")
+
+        min_games_without = st.slider(
+            "Min games without to include", 
+            1, 15, 3, 1, 
+            key="min_g_without"
+        )
+
+        run_inj = st.button("Analyze Impact", key="run_inj")
+
+    # --------------------------
+    # RIGHT SIDE RESULTS
+    # --------------------------
+    with colR:
+        if run_inj:
+            if not injured_name or injured_id is None:
+                st.warning("Select an injured player first.")
+                st.stop()
+
+            logs = get_league_player_logs(season_inj)
+            team_logs = logs[logs["TEAM_ABBREVIATION"] == team_inj].copy()
+
+            if team_logs.empty:
+                st.warning("No logs for this team/season.")
+                st.stop()
+
+            # Build PRA column when needed
+            if stat_inj == "PRA":
+                team_logs["PRA"] = (
+                    team_logs["PTS"].fillna(0)
+                    + team_logs["REB"].fillna(0)
+                    + team_logs["AST"].fillna(0)
+                )
+
+            # Games where injured player played
+            inj_logs = team_logs[team_logs["PLAYER_ID"] == injured_id]
+            if inj_logs.empty:
+                st.warning(f"{injured_name} has no games logged for this season.")
+                st.stop()
+
+            games_with = set(inj_logs["GAME_ID"].unique())
+            all_games = set(team_logs["GAME_ID"].unique())
+            games_without = all_games - games_with
+
+            if not games_without:
+                st.warning(f"No games found for {team_inj} without {injured_name}.")
+                st.stop()
+
+            # Teammate stats WITH injured player
+            with_df = team_logs[
+                (team_logs["GAME_ID"].isin(games_with)) &
+                (team_logs["PLAYER_ID"] != injured_id)
+            ].copy()
+
+            # Teammate stats WITHOUT injured player
+            without_df = team_logs[
+                (team_logs["GAME_ID"].isin(games_without)) &
+                (team_logs["PLAYER_ID"] != injured_id)
+            ].copy()
+
+            stat_col = stat_inj
+
+            g_with = with_df.groupby("PLAYER_ID")[stat_col].mean()
+            g_without = without_df.groupby("PLAYER_ID")[stat_col].mean()
+            n_without = without_df.groupby("PLAYER_ID")["GAME_ID"].nunique()
+
+            rows = []
+            idx = sorted(set(g_with.index) | set(g_without.index))
+
+            for pid in idx:
+                w = g_with.get(pid, np.nan)
+                wo = g_without.get(pid, np.nan)
+                nwo = int(n_without.get(pid, 0))
+
+                # Respect min games filter
+                if nwo < min_games_without:
+                    continue
+
+                delta = wo - w
+                name = roster_df.loc[roster_df["PLAYER_ID"] == pid, "PLAYER"]
+                name = name.iloc[0] if not name.empty else str(pid)
+
+                rows.append({
+                    "Player": name,
+                    f"{stat_col} w/ {injured_name}": w,
+                    f"{stat_col} w/o {injured_name}": wo,
+                    "Games w/o": nwo,
+                    "Delta": delta
+                })
+
+            if not rows:
+                st.warning("No teammates met the minimum games without filter.")
+                st.stop()
+
+            # Build final DataFrame
+            impact_df = pd.DataFrame(rows)
+            impact_df = impact_df.sort_values("Delta", ascending=False).reset_index(drop=True)
+
+            # --------------------------
+            # PRETTY DARK-STYLED TABLE
+            # --------------------------
+
+            def style_injury_table(df):
+                # Base dark styling
+                styles = [
+                    dict(selector="th", props=[
+                        ("background-color", "#1f2125"),
+                        ("color", "#f9fafb"),
+                        ("font-size", "0.9rem"),
+                        ("font-weight", "700"),
+                        ("border-bottom", "1px solid #333")
+                    ]),
+                    dict(selector="tr", props=[
+                        ("border-bottom", "1px solid #2a2d31")
+                    ]),
+                    dict(selector="td", props=[
+                        ("background-color", "#131417"),
+                        ("color", "#e5e7eb"),
+                        ("font-size", "0.9rem"),
+                        ("padding", "8px 10px")
+                    ]),
+                    dict(selector="table", props=[
+                        ("border-collapse", "collapse"),
+                        ("border-radius", "8px"),
+                        ("overflow", "hidden"),
+                        ("margin-top", "8px")
+                    ])
+                ]
+
+                styler = df.style.set_table_styles(styles)
+
+                # Color deltas green/red
+                def color_delta(v):
+                    if v > 0:
+                        return "color:#7CFCBE; font-weight:700;"
+                    elif v < 0:
+                        return "color:#FF6B6B; font-weight:700;"
+                    return "color:#f9fafb;"
+
+                # Format numeric columns
+                styler = styler.format({
+                    f"{stat_col} w/ {injured_name}": "{:.1f}",
+                    f"{stat_col} w/o {injured_name}": "{:.1f}",
+                    "Delta": "{:+.1f}"
+                })
+
+                styler = styler.applymap(color_delta, subset=["Delta"])
+
+                return styler.hide(axis="index")
+
+            
+# =========================
+# TAB 5: HOT MATCHUPS (Team defensive averages)
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
@@ -932,4 +1346,5 @@ with tab_matchups:
 
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
+
 
