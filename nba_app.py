@@ -8,6 +8,8 @@ from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
 from nba_api.stats.static import teams as teams_static
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
+import requests
+import datetime
 
 
 # =========================
@@ -15,6 +17,71 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 # =========================
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.title("🏀 NBA Player Prop Tools")
+
+# =========================
+# TODAY'S GAME BANNER
+# =========================
+
+games = get_today_games()
+
+if games:
+    st.markdown(
+        """
+        <div style="
+            width:100%;
+            overflow-x:auto;
+            white-space:nowrap;
+            padding:12px 0;
+            border-bottom:1px solid #333;
+            background:rgba(255,255,255,0.03);
+        ">
+        """,
+        unsafe_allow_html=True,
+    )
+
+    banner_html = ""
+
+    for g in games:
+        time_str = g["tipoff"].replace("T", " ").replace("Z", "")
+
+        banner_html += f"""
+            <span style="
+                display:inline-flex;
+                align-items:center;
+                gap:8px;
+                margin-right:28px;
+                padding:6px 10px;
+                background:rgba(0,0,0,0.25);
+                border-radius:10px;
+                border:1px solid #444;
+            ">
+                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
+                <span style="font-weight:700;color:#fff;">{g['away']}</span>
+                <span style="opacity:0.6;">@</span>
+                <span style="font-weight:700;color:#fff;">{g['home']}</span>
+                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
+                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
+            </span>
+        """
+
+    st.markdown(banner_html, unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+else:
+    st.markdown(
+        """
+        <div style="
+            width:100%;
+            padding:10px 0;
+            border-bottom:1px solid #333;
+            text-align:center;
+            color:#aaa;
+            font-size:0.9rem;
+        ">No NBA games today</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # =========================
 # THEME / CSS
@@ -195,6 +262,34 @@ STAT_TOKENS = {
     "RA": "R+A",
     "PRA": "PRA"
 }
+
+@st.cache_data(ttl=300)
+def get_today_games():
+    today = datetime.date.today().strftime("%Y%m%d")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={today}"
+
+    try:
+        events = requests.get(url, timeout=10).json().get("events", [])
+    except:
+        return []
+
+    games = []
+    for game in events:
+        comp = game["competitions"][0]
+        teams = comp["competitors"]
+
+        away = [t for t in teams if t["homeAway"] == "away"][0]
+        home = [t for t in teams if t["homeAway"] == "home"][0]
+
+        games.append({
+            "away": away["team"]["abbreviation"],
+            "away_logo": away["team"].get("logo"),
+            "home": home["team"]["abbreviation"],
+            "home_logo": home["team"].get("logo"),
+            "tipoff": game["date"],  # full datetime
+        })
+
+    return games
 
 @st.cache_data
 def get_all_player_names():
