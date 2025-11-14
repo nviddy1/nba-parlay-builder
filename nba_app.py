@@ -899,36 +899,6 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
     return html
 
-# Define NBA_CUP_DATES (example dates; update as needed for the season)
-NBA_CUP_DATES = pd.to_datetime([
-    # Add actual NBA In-Season Tournament dates here, e.g.,
-    # "2024-11-12", "2024-11-13", etc.
-    # For 2025-26 season, placeholder empty for now
-])
-
-games_today = get_espn_games(date_str)
-
-if games_today:
-    st.markdown(
-        """
-        <div style="
-            width:100%;
-            overflow-x:auto;
-            white-space:nowrap;
-            padding:12px 0;
-            border-bottom:1px solid #333;
-            background:rgba(255,255,255,0.03);
-        ">
-        """,
-        unsafe_allow_html=True,
-    )
-    # your banner rendering HTML here
-else:
-    st.markdown(
-        "<div style='padding: 10px; text-align:center; color:#aaa;'>No NBA games for this date.</div>",
-        unsafe_allow_html=True
-    )
-
 
 # =========================
 # TABS
