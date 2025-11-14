@@ -1261,20 +1261,27 @@ with tab_mc:
         )
 
         # ==========================================
-        # ---------- Distribution Summary ----------
+        # ---------- Distribution Summary (Native) ----------
         # ==========================================
-        mean_val = float(np.mean(draws))
-        median_val = float(np.median(draws))
-        p10 = float(np.percentile(draws, 10))
-        p90 = float(np.percentile(draws, 90))
-        stdev = float(np.std(draws))
+        st.subheader("📊 Distribution Summary")  # Simple header
 
-        st.markdown(
-            render_mc_distribution_card(
-                mean_val, median_val, stdev, p10, p90, hit_prob
-            ),
-            unsafe_allow_html=True,
-        )
+        # Use columns for a 3-col grid (responsive)
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Mean", f"{mean_val:.1f}")
+            st.metric("Median", f"{median_val:.1f}")
+
+        with col2:
+            st.metric("Std Dev", f"{stdev:.2f}")
+            st.metric("10th %ile", f"{p10:.1f}")
+
+        with col3:
+            st.metric("90th %ile", f"{p90:.1f}")
+            st.metric("Sim Hit %", f"{hit_prob*100:.1f}%")
+
+        # Optional: Add a small note below
+        st.caption("Based on smoothed Monte Carlo draws from historical data.")
 
         # ==========================================
         # ---------- Histogram ----------
