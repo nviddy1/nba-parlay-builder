@@ -145,118 +145,6 @@ tbody td, thead th {
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<style>
-
-/* --- MONTE CARLO RESULT CARD (SAFE OVERRIDES ONLY) --- */
-
-.mc-card {
-    background: rgba(255,255,255,0.06);
-    padding: 28px;
-    border-radius: 18px;
-    border: 1px solid rgba(255,255,255,0.12);
-    margin-top: 20px;
-}
-
-.mc-title {
-    font-size: 1.4rem;
-    font-weight: 700;
-    margin-bottom: 8px;
-}
-
-.mc-sub {
-    font-size: 0.95rem;
-    opacity: 0.75;
-    margin-bottom: 18px;
-}
-
-.mc-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-}
-
-.mc-mini {
-    background: rgba(255,255,255,0.04);
-    padding: 16px;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,0.08);
-}
-
-.mc-label {
-    font-size: 0.8rem;
-    opacity: 0.65;
-    margin-bottom: 4px;
-}
-
-.mc-value {
-    font-size: 1.4rem;
-    font-weight: 700;
-}
-
-.mc-value.pos { color: #3cffb0; }
-.mc-value.neg { color: #ff4e4e; }
-
-/* --- DISTRIBUTION SUMMARY CARD (SAFE OVERRIDES ONLY) --- */
-
-.dist-card {
-    background: rgba(255,255,255,0.05);
-    padding: 28px 32px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,0.1);
-    margin-top: 32px;
-}
-
-.dist-title {
-    font-size: 1.35rem;
-    font-weight: 700;
-    margin-bottom: 22px;
-}
-
-.dist-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 26px 32px;
-}
-
-.dist-item {
-    background: rgba(255,255,255,0.03);
-    padding: 16px 18px;
-    border-radius: 10px;
-    border: 1px solid rgba(255,255,255,0.06);
-}
-
-.dist-label {
-    font-size: 0.82rem;
-    opacity: 0.7;
-    margin-bottom: 5px;
-}
-
-.dist-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-}
-
-.dist-footnote {
-    margin-top: 18px;
-    font-size: 0.8rem;
-    opacity: 0.55;
-}
-
-@media(max-width: 900px) {
-    .dist-grid { grid-template-columns: repeat(2, 1fr); }
-    .mc-grid { grid-template-columns: repeat(2, 1fr); }
-}
-
-@media(max-width: 600px) {
-    .dist-grid { grid-template-columns: 1fr; }
-    .mc-grid { grid-template-columns: 1fr; }
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
 # =========================
 # CONSTANTS & HELPERS
 # =========================
@@ -1283,7 +1171,7 @@ with tab_mc:
     min_min_mc = st.slider("Min Minutes", 0, 40, 20)
     sims_mc    = st.slider("Number of Simulations", 2000, 50000, 15000, 2000)
 
-    # ---- Predictive MC (local) ----
+    # Predictive MC function (local)
     def mc_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
         vals = pd.to_numeric(series, errors="coerce").dropna().values
         if len(vals) == 0:
@@ -1292,20 +1180,19 @@ with tab_mc:
         μ = np.mean(vals)
         σ = np.std(vals)
 
-        # Zero variance fallback
         if σ == 0 or len(vals) == 1:
             return np.full(n_sims, μ)
 
-        # Silverman bandwidth
         n = len(vals)
         bw = 1.06 * σ * n ** (-1/5)
 
         base = np.random.choice(vals, size=n_sims, replace=True)
         noise = np.random.normal(0, bw, n_sims)
 
-        return np.clip(base + noise, 0, None)
+        draws = base + noise
+        return np.clip(draws, 0, None)
 
-    # ---- Run Simulation ----
+    # Run button logic
     if st.button("Run Simulation") and mc_text.strip():
         parsed = parse_input_line(mc_text)
         if not parsed:
@@ -1317,10 +1204,10 @@ with tab_mc:
             st.warning(f"Player '{parsed['player']}' not found. Try full name (e.g., 'Stephen Curry').")
             st.stop()
 
-        # ---- Fetch + Filter Logs ----
+        # Fetch & filter (same as before)
         df = fetch_gamelog(pid, seasons_mc, include_playoffs=False, only_playoffs=False)
         if df.empty:
-            st.warning("No game log data available for this player in the selected seasons.")
+            st.warning("No game log data available for this player in the selected seasons. Try adding more seasons.")
             st.stop()
 
         d = df.copy()
@@ -1334,7 +1221,7 @@ with tab_mc:
         d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
 
         if d.empty:
-            st.warning("No games matching filters (minutes/location).")
+            st.warning("No games matching the filters (e.g., min minutes, location). Loosen filters and try again.")
             st.stop()
 
         ser = compute_stat_series(d, parsed["stat"]).dropna()
@@ -1342,11 +1229,10 @@ with tab_mc:
             st.warning("No valid stat history after filters.")
             st.stop()
 
-        # ---- Monte Carlo ----
+        # Simulate
         draws = mc_predictive(ser, sims_mc)
         thr = parsed["thr"]
         direction = parsed["dir"]
-
         hit_prob = float((draws <= thr).mean()) if direction == "Under" else float((draws >= thr).mean())
         fair_odds = prob_to_american(hit_prob)
         book_odds = parsed["odds"]
@@ -1354,13 +1240,12 @@ with tab_mc:
         edge_pct = None if book_prob is None else (hit_prob - book_prob) * 100
 
         stat_name = STAT_LABELS.get(parsed["stat"], parsed["stat"])
-        dir_short = "O" if direction == "Over" else "U"
 
-        # ---- Render MC Result Card ----
+        # Result Card (keep your existing render_mc_result_card)
         st.markdown(
             render_mc_result_card(
                 parsed["player"],
-                dir_short,
+                "O" if direction == "Over" else "U",
                 thr,
                 stat_name,
                 parsed["loc"],
@@ -1373,76 +1258,44 @@ with tab_mc:
             unsafe_allow_html=True
         )
 
-        # =====================================
-        # NEW DISTRIBUTION SUMMARY (CARD STYLE)
-        # =====================================
+        # FIXED: Distribution Summary (compute vars inline, no HTML)
+        st.subheader("📊 Distribution Summary")
 
-        mean_val   = float(np.mean(draws))
+        # Define vars right here to avoid NameError
+        mean_val = float(np.mean(draws))
         median_val = float(np.median(draws))
-        stdev      = float(np.std(draws))
-        p10        = float(np.percentile(draws, 10))
-        p90        = float(np.percentile(draws, 90))
+        p10 = float(np.percentile(draws, 10))
+        p90 = float(np.percentile(draws, 90))
+        stdev = float(np.std(draws))
 
-        st.markdown(f"""
-        <div class="dist-card">
-            <h3 class="dist-title">📊 Distribution Summary</h3>
+        col1, col2, col3 = st.columns(3)
 
-            <div class="dist-grid">
+        with col1:
+            st.metric("Mean", f"{mean_val:.1f}")
+            st.metric("Median", f"{median_val:.1f}")
 
-                <div class="dist-item">
-                    <div class="dist-label">Mean</div>
-                    <div class="dist-value">{mean_val:.1f}</div>
-                </div>
+        with col2:
+            st.metric("Std Dev", f"{stdev:.2f}")
+            st.metric("10th %ile", f"{p10:.1f}")
 
-                <div class="dist-item">
-                    <div class="dist-label">Median</div>
-                    <div class="dist-value">{median_val:.1f}</div>
-                </div>
+        with col3:
+            st.metric("90th %ile", f"{p90:.1f}")
+            st.metric("Sim Hit %", f"{hit_prob*100:.1f}%")
 
-                <div class="dist-item">
-                    <div class="dist-label">Std Dev</div>
-                    <div class="dist-value">{stdev:.2f}</div>
-                </div>
+        st.caption("Based on smoothed Monte Carlo draws from historical data.")
 
-                <div class="dist-item">
-                    <div class="dist-label">10th %ile</div>
-                    <div class="dist-value">{p10:.1f}</div>
-                </div>
-
-                <div class="dist-item">
-                    <div class="dist-label">90th %ile</div>
-                    <div class="dist-value">{p90:.1f}</div>
-                </div>
-
-                <div class="dist-item">
-                    <div class="dist-label">Sim Hit %</div>
-                    <div class="dist-value">{hit_prob*100:.1f}%</div>
-                </div>
-
-            </div>
-
-            <div class="dist-footnote">
-                Based on smoothed Monte Carlo draws from historical data.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ---- Histogram ----
+        # Histogram (unchanged)
         hist_color = "#00c896" if edge_pct is not None and edge_pct >= 0 else "#e05a5a"
         fig, ax = plt.subplots(figsize=(6, 3))
-
         fig.patch.set_facecolor("#1e1f22")
         ax.set_facecolor("#1e1f22")
 
-        ax.hist(draws, bins=25, color=hist_color, alpha=0.75,
-                edgecolor="#d1d5db", linewidth=0.4)
-
-        ax.axvline(
-            thr,
-            color="#ff6666" if direction == "Over" else "#00c896",
-            linestyle="--",
-            linewidth=1.8
+        ax.hist(
+            draws, bins=25,
+            color=hist_color, alpha=0.75,
+            edgecolor="#d1d5db", linewidth=0.4
         )
+        ax.axvline(thr, color="#ff6666" if direction == "Over" else "#00c896", linestyle="--", linewidth=1.8)
 
         ax.set_xlabel(f"{stat_name} ({direction} {thr})", color="#e5e7eb")
         ax.set_ylabel("Frequency", color="#e5e7eb")
@@ -1453,8 +1306,7 @@ with tab_mc:
 
         st.pyplot(fig, use_container_width=True)
 
-        st.caption("💡 Simulations use historical variance + smoothing noise. Rerun for new random draws.")
-
+        st.caption(f"💡 Simulations use historical variance + smoothing noise. Rerun for new random draws. Edge >0% = +EV bet.")
 
 # =========================
 # TAB 4: INJURY IMPACT ANALYZER
