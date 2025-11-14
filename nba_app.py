@@ -833,80 +833,75 @@ with tab_breakeven:
                 st.table(pd.DataFrame(rows).set_index("Stat"))
 
 # =========================
-# TAB 3: HOT MATCHUPS (REAL NBA API)
+# TAB 3: HOT MATCHUPS (TEAM DEFENSE TABLE)
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
+from datetime import datetime
 
 @st.cache_data(show_spinner=False)
-def get_current_season():
-    from datetime import datetime
+def get_current_season_str():
     now = datetime.now()
     year = now.year if now.month >= 8 else now.year - 1
     return f"{year}-{str(year+1)[-2:]}"
 
 @st.cache_data(show_spinner=True)
-def load_league_logs(season):
-    """Fetch one season of league gamelogs."""
+def load_team_logs(season: str) -> pd.DataFrame:
+    """Fetch current regular-season team logs (one row per game)."""
     df = leaguegamelog.LeagueGameLog(
-        season=season, season_type_all_star="Regular Season"
+        season=season,
+        season_type_all_star="Regular Season",
+        player_or_team_abbreviation="T",
+        timeout=60
     ).get_data_frames()[0]
-    for k in ["PTS","REB","AST","STL","BLK","FG3M","MIN"]:
+    for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
         if k in df.columns:
             df[k] = pd.to_numeric(df[k], errors="coerce")
+    df["OPP"] = (
+        df["MATCHUP"].astype(str)
+        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1).iloc[:,0]
+    )
     return df
 
+tab_matchups = st.tabs(["📈 Hot Matchups"])[0]
+
 with tab_matchups:
-    st.subheader("📈 Hot Matchups — Real Defensive Data (Per 48 Minutes)")
-    st.caption("Computed from live NBA game logs via the official stats API.")
+    st.subheader("📈 Hot Matchups — Points / Rebounds / Assists Allowed per Game")
+    st.caption("Ranked by average allowed per game (team logs, NBA Stats API).")
 
-    stat_choice = st.selectbox("Stat Type", ["PTS","REB","AST","STL","BLK","FG3M"], index=0)
-    season = get_current_season()
-    df = load_league_logs(season)
+    stat_choice = st.selectbox(
+        "Stat Type",
+        ["PTS","REB","AST","STL","BLK","FG3M"],
+        index=0
+    )
 
-    # Compute opponent team for each row (MATCHUP column gives e.g. "BOS @ LAL")
-    df["TEAM_ABBR"] = df["TEAM_ABBREVIATION"]
-    df["OPP"] = df["MATCHUP"].apply(lambda x: x.split(" @ ")[-1] if "@" in x else x.split(" vs. ")[-1])
+    season = get_current_season_str()
+    df = load_team_logs(season)
+    if df.empty:
+        st.warning("No data yet for this season.")
+        st.stop()
 
-    # Aggregate total stat and minutes by OPP (i.e. what each team allows)
-    agg = df.groupby("OPP").agg(
-        {stat_choice: "sum", "MIN": "sum"}
-    ).reset_index()
-    agg = agg[agg["MIN"] > 0]
-    agg["PER48_ALLOWED"] = (agg[stat_choice] / agg["MIN"]) * 48
+    # Compute average allowed per game
+    allowed = (
+        df.groupby("OPP", as_index=False)[stat_choice]
+        .mean()
+        .rename(columns={stat_choice: f"{stat_choice}_ALLOWED_PER_GAME"})
+    )
+    allowed = allowed.sort_values(f"{stat_choice}_ALLOWED_PER_GAME", ascending=False)
 
-    # Sort
-    easiest = agg.sort_values("PER48_ALLOWED", ascending=False).head(5)
-    toughest = agg.sort_values("PER48_ALLOWED", ascending=True).head(5)
+    # Create display with rank
+    allowed["Rank"] = range(1, len(allowed)+1)
+    allowed = allowed[["Rank","OPP",f"{stat_choice}_ALLOWED_PER_GAME"]]
+    allowed.columns = ["Rank","Team","Allowed / Game"]
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown(f"### 🔥 Most {stat_choice} Allowed (Easiest Defenses)")
-        for _, row in easiest.iterrows():
-            logo = f"https://cdn.nba.com/logos/nba/{row['OPP']}/global/L/logo.svg"
-            st.markdown(
-                f"""
-                <div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>
-                    <img src='{logo}' width='32'>
-                    <span style='font-weight:700;font-size:1.1rem;'>{row['OPP']}</span>
-                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['PER48_ALLOWED']:.1f}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-    with c2:
-        st.markdown(f"### 🧊 Fewest {stat_choice} Allowed (Toughest Defenses)")
-        for _, row in toughest.iterrows():
-            logo = f"https://cdn.nba.com/logos/nba/{row['OPP']}/global/L/logo.svg"
-            st.markdown(
-                f"""
-                <div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>
-                    <img src='{logo}' width='32'>
-                    <span style='font-weight:700;font-size:1.1rem;'>{row['OPP']}</span>
-                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['PER48_ALLOWED']:.1f}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    st.dataframe(
+        allowed.style.format({"Allowed / Game": "{:.1f}"})
+        .set_properties(**{"text-align": "center"})
+        .set_table_styles(
+            [{"selector": "th", "props": [("text-align", "center"),("background-color","#1a1b1e")]}]
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
 
-    st.divider()
-    st.caption(f"Season {season} • Data from NBA Stats API • Per 48-Minute Rate of {stat_choice} Allowed")
+    st.caption(f"Season {season} • Source: NBA Stats API • Regular season team game logs")
