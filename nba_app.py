@@ -1,5 +1,6 @@
 # nba_app.py
 import streamlit as st
+import textwrap
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -98,25 +99,27 @@ def render_espn_banner(scoreboard):
     )
     html = '<div class="espn-banner-container">'
     events = scoreboard["events"]
+    num_games = len(events)
+    st.success(f"Rendering {num_games} games for {datetime.strptime(chosen_date, '%Y%m%d').strftime('%b %d, %Y')}")  # Optional: Show date for clarity
     for i, game in enumerate(events):
         try:
             comp = game["competitions"][0]
             status = game["status"]["type"]["shortDetail"]
             t1 = comp["competitors"][0]  # Away
             t2 = comp["competitors"][1]  # Home
-            
+           
             def fmt_team(team):
                 team_dict = team["team"]
                 abbr = team_dict.get("abbreviation", "TBD")
-                logo = team_dict.get("logo", "") or f"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{abbr.lower()}.png"
+                logo = team_dict.get("logo", f"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{abbr.lower()}.png")
                 record = ""
                 if team.get("records") and len(team["records"]) > 0:
                     record = team["records"][0].get("summary", "")
                 return abbr, logo, record
-            
+           
             away_abbr, away_logo, away_record = fmt_team(t1)
             home_abbr, home_logo, home_record = fmt_team(t2)
-            
+           
             # Time parsing with fallback
             try:
                 start_time_str = game["date"].replace("Z", "+00:00")
@@ -124,44 +127,46 @@ def render_espn_banner(scoreboard):
                 est = start_time.astimezone(pytz.timezone("US/Eastern"))
                 time_str = est.strftime("%-I:%M %p ET")
             except (ValueError, KeyError):
-                time_str = "TBD"
-            
+                time_str = status or "TBD"
+           
             # Status override for live/final
             if status.lower() in ["final", "in progress", "live"]:
                 time_str = status.upper()
-            
+           
             # TV
             tv = ""
             if "broadcasts" in comp and len(comp["broadcasts"]) > 0:
-                tv_networks = [b.get("names", [""])[0] for b in comp["broadcasts"] if b.get("names")]
+                tv_networks = []
+                for b in comp["broadcasts"]:
+                    names = b.get("names", [])
+                    if names:
+                        tv_networks.extend(names)
                 if tv_networks:
                     tv_network = ", ".join(tv_networks[:2])  # First 1-2 networks
                     tv = f'<div class="tv">{tv_network}</div>'
-            
-            # Build snippet
-            snippet = f"""
-            <div class="espn-game-card">
-                <div class="espn-time">{time_str}{tv}</div>
-                <div class="espn-matchup">
-                    <div class="espn-team">
-                        <img src="{away_logo}" alt="{away_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away_abbr.lower()}.png'">
-                        <div class="espn-team-abbr">{away_abbr}</div>
-                        <div class="espn-record">{away_record}</div>
-                    </div>
-                    <div class="espn-at">@</div>
-                    <div class="espn-team">
-                        <img src="{home_logo}" alt="{home_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home_abbr.lower()}.png'">
-                        <div class="espn-team-abbr">{home_abbr}</div>
-                        <div class="espn-record">{home_record}</div>
+           
+            # Build snippet without indentation issues
+            snippet = textwrap.dedent(f"""
+                <div class="espn-game-card">
+                    <div class="espn-time">{time_str}{tv}</div>
+                    <div class="espn-matchup">
+                        <div class="espn-team">
+                            <img src="{away_logo}" alt="{away_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away_abbr.lower()}.png'">
+                            <div class="espn-team-abbr">{away_abbr}</div>
+                            <div class="espn-record">{away_record}</div>
+                        </div>
+                        <div class="espn-at">@</div>
+                        <div class="espn-team">
+                            <img src="{home_logo}" alt="{home_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home_abbr.lower()}.png'">
+                            <div class="espn-team-abbr">{home_abbr}</div>
+                            <div class="espn-record">{home_record}</div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            """
+            """).strip()
             html += snippet
-            # Removed st.debug() as Streamlit doesn't support it
         except Exception as e:
-            st.error(f"Error rendering game {i+1}: {str(e)}")
-            # Skip or add placeholder
+            st.error(f"Error rendering game {i+1} ({game.get('name', 'Unknown')}): {str(e)}")
             continue
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
@@ -194,9 +199,7 @@ def fetch_scoreboard_cached(date_str):
 scoreboard = fetch_scoreboard_cached(chosen_date)
 
 # --- Render banner ---
-banner = st.container()
-with banner:
-    render_espn_banner(scoreboard)
+render_espn_banner(scoreboard)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
