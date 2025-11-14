@@ -833,93 +833,80 @@ with tab_breakeven:
                 st.table(pd.DataFrame(rows).set_index("Stat"))
 
 # =========================
-# TAB 3: HOT MATCHUPS
+# TAB 3: HOT MATCHUPS (REAL NBA API)
 # =========================
+from nba_api.stats.endpoints import leaguegamelog
+
+@st.cache_data(show_spinner=False)
+def get_current_season():
+    from datetime import datetime
+    now = datetime.now()
+    year = now.year if now.month >= 8 else now.year - 1
+    return f"{year}-{str(year+1)[-2:]}"
+
+@st.cache_data(show_spinner=True)
+def load_league_logs(season):
+    """Fetch one season of league gamelogs."""
+    df = leaguegamelog.LeagueGameLog(
+        season=season, season_type_all_star="Regular Season"
+    ).get_data_frames()[0]
+    for k in ["PTS","REB","AST","STL","BLK","FG3M","MIN"]:
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
+    return df
+
 with tab_matchups:
-    st.subheader("📈 Hot Matchups — Easiest Defenses to Score Against")
+    st.subheader("📈 Hot Matchups — Real Defensive Data (Per 48 Minutes)")
+    st.caption("Computed from live NBA game logs via the official stats API.")
 
-    st.caption("Based on per-48-minute averages from the current season (snapshot data).")
+    stat_choice = st.selectbox("Stat Type", ["PTS","REB","AST","STL","BLK","FG3M"], index=0)
+    season = get_current_season()
+    df = load_league_logs(season)
 
-    # --- Hard-coded snapshot from Hashtag Basketball (example PTS allowed) ---
-    HOT_MATCHUPS = {
-        "PTS": [
-            {"rank": 1, "team": "WAS", "stat": 118.3},
-            {"rank": 2, "team": "CHA", "stat": 116.5},
-            {"rank": 3, "team": "UTA", "stat": 115.4},
-            {"rank": 4, "team": "SAS", "stat": 114.7},
-            {"rank": 5, "team": "DET", "stat": 113.9},
-        ],
-        "REB": [
-            {"rank": 1, "team": "POR", "stat": 56.2},
-            {"rank": 2, "team": "SAS", "stat": 55.4},
-            {"rank": 3, "team": "UTA", "stat": 54.8},
-            {"rank": 4, "team": "WAS", "stat": 54.3},
-            {"rank": 5, "team": "CHA", "stat": 53.9},
-        ],
-        "AST": [
-            {"rank": 1, "team": "WAS", "stat": 28.8},
-            {"rank": 2, "team": "CHA", "stat": 28.3},
-            {"rank": 3, "team": "TOR", "stat": 27.9},
-            {"rank": 4, "team": "SAS", "stat": 27.7},
-            {"rank": 5, "team": "ATL", "stat": 27.2},
-        ],
-        "FG3M": [
-            {"rank": 1, "team": "SAS", "stat": 14.6},
-            {"rank": 2, "team": "UTA", "stat": 14.4},
-            {"rank": 3, "team": "WAS", "stat": 14.1},
-            {"rank": 4, "team": "CHA", "stat": 13.9},
-            {"rank": 5, "team": "POR", "stat": 13.7},
-        ],
-    }
+    # Compute opponent team for each row (MATCHUP column gives e.g. "BOS @ LAL")
+    df["TEAM_ABBR"] = df["TEAM_ABBREVIATION"]
+    df["OPP"] = df["MATCHUP"].apply(lambda x: x.split(" @ ")[-1] if "@" in x else x.split(" vs. ")[-1])
 
-    stat_choice = st.selectbox("Stat Type", list(HOT_MATCHUPS.keys()), index=0)
-    data = HOT_MATCHUPS[stat_choice]
+    # Aggregate total stat and minutes by OPP (i.e. what each team allows)
+    agg = df.groupby("OPP").agg(
+        {stat_choice: "sum", "MIN": "sum"}
+    ).reset_index()
+    agg = agg[agg["MIN"] > 0]
+    agg["PER48_ALLOWED"] = (agg[stat_choice] / agg["MIN"]) * 48
 
-    # --- Display table side by side ---
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.markdown("### 🔥 Top 5 Easiest Defenses")
-    with c2:
-        st.markdown("### 🧊 Top 5 Toughest Defenses")
-
-    # Create toughest list by reversing the same table for demonstration
-    toughest = list(reversed(data))
+    # Sort
+    easiest = agg.sort_values("PER48_ALLOWED", ascending=False).head(5)
+    toughest = agg.sort_values("PER48_ALLOWED", ascending=True).head(5)
 
     c1, c2 = st.columns(2)
     with c1:
-        df_easy = pd.DataFrame(data)
-        df_easy["Team Logo"] = df_easy["team"].apply(
-            lambda t: f"https://cdn.nba.com/logos/nba/{t}/global/L/logo.svg"
-        )
-        for _, row in df_easy.iterrows():
+        st.markdown(f"### 🔥 Most {stat_choice} Allowed (Easiest Defenses)")
+        for _, row in easiest.iterrows():
+            logo = f"https://cdn.nba.com/logos/nba/{row['OPP']}/global/L/logo.svg"
             st.markdown(
                 f"""
                 <div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>
-                    <img src='{row['Team Logo']}' width='32'>
-                    <span style='font-weight:700;font-size:1.1rem;'>{row['team']}</span>
-                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['stat']}</span>
+                    <img src='{logo}' width='32'>
+                    <span style='font-weight:700;font-size:1.1rem;'>{row['OPP']}</span>
+                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['PER48_ALLOWED']:.1f}</span>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-
     with c2:
-        df_hard = pd.DataFrame(toughest)
-        df_hard["Team Logo"] = df_hard["team"].apply(
-            lambda t: f"https://cdn.nba.com/logos/nba/{t}/global/L/logo.svg"
-        )
-        for _, row in df_hard.iterrows():
+        st.markdown(f"### 🧊 Fewest {stat_choice} Allowed (Toughest Defenses)")
+        for _, row in toughest.iterrows():
+            logo = f"https://cdn.nba.com/logos/nba/{row['OPP']}/global/L/logo.svg"
             st.markdown(
                 f"""
                 <div style='display:flex;align-items:center;gap:12px;margin-bottom:6px;'>
-                    <img src='{row['Team Logo']}' width='32'>
-                    <span style='font-weight:700;font-size:1.1rem;'>{row['team']}</span>
-                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['stat']}</span>
+                    <img src='{logo}' width='32'>
+                    <span style='font-weight:700;font-size:1.1rem;'>{row['OPP']}</span>
+                    <span style='margin-left:auto;font-size:1rem;color:#9ca3af;'>{row['PER48_ALLOWED']:.1f}</span>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
 
     st.divider()
-    st.caption("Last updated: 2025-11-10 snapshot • Source: Hashtag Basketball")
-
+    st.caption(f"Season {season} • Data from NBA Stats API • Per 48-Minute Rate of {stat_choice} Allowed")
