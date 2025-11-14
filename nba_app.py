@@ -145,6 +145,118 @@ tbody td, thead th {
 </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+<style>
+
+/* --- MONTE CARLO RESULT CARD (SAFE OVERRIDES ONLY) --- */
+
+.mc-card {
+    background: rgba(255,255,255,0.06);
+    padding: 28px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.12);
+    margin-top: 20px;
+}
+
+.mc-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.mc-sub {
+    font-size: 0.95rem;
+    opacity: 0.75;
+    margin-bottom: 18px;
+}
+
+.mc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.mc-mini {
+    background: rgba(255,255,255,0.04);
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.mc-label {
+    font-size: 0.8rem;
+    opacity: 0.65;
+    margin-bottom: 4px;
+}
+
+.mc-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+}
+
+.mc-value.pos { color: #3cffb0; }
+.mc-value.neg { color: #ff4e4e; }
+
+/* --- DISTRIBUTION SUMMARY CARD (SAFE OVERRIDES ONLY) --- */
+
+.dist-card {
+    background: rgba(255,255,255,0.05);
+    padding: 28px 32px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.1);
+    margin-top: 32px;
+}
+
+.dist-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin-bottom: 22px;
+}
+
+.dist-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 26px 32px;
+}
+
+.dist-item {
+    background: rgba(255,255,255,0.03);
+    padding: 16px 18px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+
+.dist-label {
+    font-size: 0.82rem;
+    opacity: 0.7;
+    margin-bottom: 5px;
+}
+
+.dist-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+
+.dist-footnote {
+    margin-top: 18px;
+    font-size: 0.8rem;
+    opacity: 0.55;
+}
+
+@media(max-width: 900px) {
+    .dist-grid { grid-template-columns: repeat(2, 1fr); }
+    .mc-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media(max-width: 600px) {
+    .dist-grid { grid-template-columns: 1fr; }
+    .mc-grid { grid-template-columns: 1fr; }
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
 # =========================
 # CONSTANTS & HELPERS
 # =========================
