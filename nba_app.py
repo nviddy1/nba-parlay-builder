@@ -596,8 +596,8 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_mc, tab_predict, tab_injury, tab_matchups = st.tabs(
-    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🎯 Pick Predictor", "🩹 Injury Impact", "📊 Hot Matchups"]
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_matchups = st.tabs(
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "📊 Hot Matchups"]
 )
 
 # =========================
@@ -1057,89 +1057,9 @@ with tab_mc:
                     ax.set_ylabel("Simulated frequency")
                     st.pyplot(fig, use_container_width=True)
 
-# =========================
-# TAB 4: PICK PREDICTOR (single prop)
-# =========================
-with tab_predict:
-    st.subheader("🎯 Pick Predictor (Historical EV)")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        pp_text = st.text_input(
-            "Prop (e.g., 'Booker O 27.5 PTS')",
-            key="pp_input",
-            placeholder="Player O/U Line Stat ..."
-        )
-        seasons_pp = st.multiselect(
-            "Seasons",
-            ["2025-26","2024-25","2023-24","2022-23"],
-            default=["2025-26","2024-25"],
-            key="seasons_pp"
-        )
-        last_n_pp = st.slider("Last N Games", 5, 100, 20, 1, key="lastn_pp")
-        min_min_pp = st.slider("Min Minutes", 0, 40, 20, 1, key="min_pp")
-        loc_pp = st.selectbox("Location", ["All","Home Only","Away"], index=0, key="loc_pp")
-    with col2:
-        odds_pp = st.number_input("Sportsbook Odds", value=-110, step=5, key="odds_pp")
-        include_playoffs_pp = st.checkbox("Include Playoffs", value=False, key="pp_playoffs")
-
-    if st.button("Run Prediction", key="run_pp") and pp_text.strip():
-        parsed = parse_input_line(pp_text)
-        if not parsed or not parsed["player"]:
-            st.warning("Could not parse player / stat from input.")
-        else:
-            pid = get_player_id(parsed["player"])
-            if not pid:
-                st.warning("Could not find that player.")
-            else:
-                df = fetch_gamelog(pid, seasons_pp, include_playoffs_pp, only_playoffs=False)
-                d = df.copy()
-                d = d[d["MIN_NUM"] >= min_min_pp]
-                if loc_pp == "Home Only":
-                    d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
-                elif loc_pp == "Away":
-                    d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
-                d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_pp)
-
-                if d.empty:
-                    st.warning("No games after filters.")
-                else:
-                    p, hits, total = leg_probability(d, parsed["stat"], parsed["dir"], parsed["thr"])
-                    fair = prob_to_american(p)
-                    book_prob = american_to_implied(odds_pp)
-                    ev_pct = None
-                    if book_prob is not None:
-                        ev_pct = (p - book_prob) * 100.0
-
-                    stat_label = STAT_LABELS.get(parsed["stat"], parsed["stat"])
-                    dir_short = "O" if parsed["dir"] == "Over" else "U"
-                    hit_str = f"{p*100:.1f}% ({hits}/{total})"
-                    ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
-
-                    cls = "neutral"
-                    if ev_pct is not None:
-                        cls = "pos" if ev_pct >= 0 else "neg"
-
-                    st.markdown(f"""
-<div class="card {cls}">
-  <h2>🎯 Pick Predictor</h2>
-  <div class="cond">
-    {parsed["player"]} — {dir_short} {fmt_half(parsed["thr"])} {stat_label} ({loc_pp}, last {last_n_pp} games)
-  </div>
-  <div class="row">
-    <div class="m"><div class="lab">Historical Hit Rate</div><div class="val">{hit_str}</div></div>
-    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{fair}</div></div>
-    <div class="m"><div class="lab">Book Odds</div><div class="val">{odds_pp}</div></div>
-    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_str}</div></div>
-  </div>
-  <div style="margin-top:10px;">
-    <span class="chip">{('🔥 +EV Bet (history)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV Bet')}</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
 
 # =========================
-# TAB 5: INJURY IMPACT ANALYZER
+# TAB 4: INJURY IMPACT ANALYZER
 # =========================
 with tab_injury:
     st.subheader("🩹 Injury Impact Analyzer")
@@ -1246,7 +1166,7 @@ with tab_injury:
                                 )
 
 # =========================
-# TAB 6: HOT MATCHUPS (Team defensive averages)
+# TAB 5: HOT MATCHUPS (Team defensive averages)
 # =========================
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
