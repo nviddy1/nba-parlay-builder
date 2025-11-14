@@ -585,6 +585,39 @@ def monte_carlo_sim(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
         return np.array([])
     return np.random.choice(vals, size=n_sims, replace=True)
 
+def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000):
+    """
+    Predictive Monte Carlo using kernel smoothing (SciPy-free).
+    Produces a smooth, bell-curve-like distribution anchored to real stats.
+    """
+    vals = pd.to_numeric(series, errors="coerce").dropna().values
+    if len(vals) == 0:
+        return np.array([])
+
+    # Base statistical properties
+    mean = np.mean(vals)
+    std = np.std(vals)
+
+    # If no variance, just replicate mean
+    if std == 0:
+        return np.full(n_sims, mean)
+
+    # Silverman's Rule of Thumb for bandwidth selection
+    n = len(vals)
+    bandwidth = 1.06 * std * n ** (-1/5)
+
+    # Bootstrap + smooth kernel noise
+    base = np.random.choice(vals, size=n_sims, replace=True)
+    noise = np.random.normal(0, bandwidth, size=n_sims)
+
+    draws = base + noise
+
+    # basketball stats can’t be negative
+    draws = np.clip(draws, 0, None)
+
+    return draws
+
+
 
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
@@ -1005,7 +1038,7 @@ with tab_mc:
                 d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
 
                 ser = compute_stat_series(d, parsed["stat"])
-                draws = monte_carlo_sim(ser, n_sims=sims_mc)
+                draws = monte_carlo_predictive(ser, n_sims=sims_mc)
                 if draws.size == 0:
                     st.warning("No valid stat data to simulate from.")
                 else:
@@ -1051,10 +1084,26 @@ with tab_mc:
 
                     # Histogram
                     fig, ax = plt.subplots(figsize=(6, 3))
-                    ax.hist(draws, bins=20, alpha=0.85)
-                    ax.axvline(thr, color="red", linestyle="--", linewidth=1.5)
-                    ax.set_xlabel(stat_label)
-                    ax.set_ylabel("Simulated frequency")
+                    fig.patch.set_facecolor("#1e1f22")
+                    ax.set_facecolor("#1e1f22")
+
+                    # Histogram
+                    ax.hist(draws, bins=25, color="#00c896", alpha=0.75, edgecolor="#d1d5db", linewidth=0.4)
+
+                    # Threshold line
+                    ax.axvline(thr, color="#ff6666", linestyle="--", linewidth=1.8)
+
+                    # Labels
+                    ax.set_xlabel(stat_label, color="#e5e7eb")
+                    ax.set_ylabel("Simulated Frequency", color="#e5e7eb")
+
+                    # Ticks
+                    ax.tick_params(colors="#9ca3af")
+
+                    # Spines
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor("#4b5563")
+
                     st.pyplot(fig, use_container_width=True)
 
 
