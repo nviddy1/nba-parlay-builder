@@ -772,9 +772,6 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
     return html
 
-
-
-
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
     # Add actual NBA In-Season Tournament dates here, e.g.,
@@ -784,56 +781,48 @@ NBA_CUP_DATES = pd.to_datetime([
 
 games = get_today_games()
 
-st.markdown("""
-<style>
-.game-scroll {
-    display: flex;
-    overflow-x: auto;
-    gap: 14px;
-    padding: 10px 4px;
-    scrollbar-width: none;
-}
-.game-scroll::-webkit-scrollbar { display: none; }
-
-.game-card {
-    background: #1e1f22;
-    border: 1px solid #333;
-    border-radius: 14px;
-    padding: 8px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    white-space: nowrap;
-    box-shadow: 0 0 12px rgba(0,0,0,0.3);
-}
-.team-logo {
-    width: 22px;
-}
-.game-time {
-    color: #9ca3af;
-    font-size: 0.85rem;
-    margin-right: 4px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
 if games:
-    st.markdown('<div class="game-scroll">', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="
+            width:100%;
+            overflow-x:auto;
+            white-space:nowrap;
+            padding:12px 0;
+            border-bottom:1px solid #333;
+            background:rgba(255,255,255,0.03);
+        ">
+        """,
+        unsafe_allow_html=True,
+    )
+
+    banner_html = ""
+
     for g in games:
-        st.markdown(f"""
-        <div class="game-card">
-            <span class="game-time">{g['time']}</span>
-            <img class="team-logo" src="{g['away_logo']}">
-            <strong>{g['away']}</strong>
-            <span>@</span>
-            <img class="team-logo" src="{g['home_logo']}">
-            <strong>{g['home']}</strong>
-        </div>
-        """, unsafe_allow_html=True)
+        time_str = g.get("time", "")
+
+        banner_html += f"""
+            <span style="
+                display:inline-flex;
+                align-items:center;
+                gap:8px;
+                margin-right:28px;
+                padding:6px 10px;
+                background:rgba(0,0,0,0.25);
+                border-radius:10px;
+                border:1px solid #444;
+            ">
+                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
+                <span style="font-weight:700;color:#fff;">{g['away']}</span>
+                <span style="opacity:0.6;">@</span>
+                <span style="font-weight:700;color:#fff;">{g['home']}</span>
+                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
+                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
+            </span>
+        """
+
+    st.markdown(banner_html, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
-else:
-    st.warning("No games scheduled today.")
 
 
 # =========================
