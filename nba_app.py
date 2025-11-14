@@ -585,37 +585,32 @@ def monte_carlo_sim(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
         return np.array([])
     return np.random.choice(vals, size=n_sims, replace=True)
 
-def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000):
+def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
     """
     Predictive Monte Carlo using kernel smoothing (SciPy-free).
-    Produces a smooth, bell-curve-like distribution anchored to real stats.
+    Produces a smoother, bell-curve-ish distribution anchored to real stats.
     """
     vals = pd.to_numeric(series, errors="coerce").dropna().values
     if len(vals) == 0:
         return np.array([])
 
-    # Base statistical properties
-    mean = np.mean(vals)
-    std = np.std(vals)
+    mean = float(np.mean(vals))
+    std = float(np.std(vals))
 
-    # If no variance, just replicate mean
-    if std == 0:
+    # If no variance, just repeat the mean
+    if std == 0 or len(vals) == 1:
         return np.full(n_sims, mean)
 
-    # Silverman's Rule of Thumb for bandwidth selection
+    # Silverman's rule of thumb for bandwidth
     n = len(vals)
     bandwidth = 1.06 * std * n ** (-1/5)
 
-    # Bootstrap + smooth kernel noise
     base = np.random.choice(vals, size=n_sims, replace=True)
     noise = np.random.normal(0, bandwidth, size=n_sims)
 
     draws = base + noise
-
-    # basketball stats can’t be negative
-    draws = np.clip(draws, 0, None)
-
-    return draws
+    # stats can't go below zero
+    return np.clip(draws, 0, None)
 
 
 
@@ -996,235 +991,250 @@ with tab_breakeven:
 # TAB 3: MONTE CARLO PROP SIMULATOR
 # =========================
 with tab_mc:
-    st.subheader("🎲 Monte Carlo Simulator (Predictive)")
+    st.subheader("🎲 Monte Carlo Prop Simulator (Predictive)")
 
-    mc_col1, mc_col2 = st.columns([1, 1])
+    c1, c2 = st.columns([2, 1])
 
-    with mc_col1:
-        season_mc = st.selectbox("Season", ["2025-26","2024-25","2023-24"], index=1)
-        team_mc = st.selectbox("Team", TEAM_ABBRS)
-        stat_mc = st.selectbox("Stat", ["PTS", "REB", "AST", "PRA"], index=0)
+    # -------------------------
+    # LEFT: bet bar + filters
+    # -------------------------
+    with c1:
+        mc_text = st.text_input(
+            "Prop (e.g., 'Maxey O 29.5 PTS Away -110')",
+            key="mc_input",
+            placeholder="Player O/U Line Stat Location Odds"
+        )
 
-        # sportsbook inputs
-        thr = st.number_input("Prop Line", value=25.5, step=0.5)
-        sb_odds = st.number_input("Sportsbook Odds (e.g., -115 or +125)", value=-115)
-        is_over = st.radio("Bet Type", ["Over", "Under"], horizontal=True) == "Over"
+        seasons_mc = st.multiselect(
+            "Seasons",
+            ["2025-26","2024-25","2023-24","2022-23"],
+            default=["2025-26","2024-25"],
+            key="seasons_mc"
+        )
 
-        sims_mc = st.slider("Number of Simulations", 2000, 30000, 15000, 1000)
+        last_n_mc = st.slider(
+            "Last N Games",
+            5, 100, 20, 1,
+            key="lastn_mc"
+        )
 
-        run_mc = st.button("Run Simulation")
+        min_min_mc = st.slider(
+            "Min Minutes",
+            0, 40, 20, 1,
+            key="min_mc"
+        )
 
-    with mc_col2:
-        roster_df = get_team_roster(season_mc, team_mc)
-        if not roster_df.empty:
-            player_mc = st.selectbox("Player", roster_df["PLAYER"].tolist())
-            pid_mc = int(roster_df.loc[roster_df["PLAYER"] == player_mc, "PLAYER_ID"].iloc[0])
+        loc_mc = st.selectbox(
+            "Location",
+            ["All","Home Only","Away"],
+            index=0,
+            key="loc_mc"
+        )
+
+    # -------------------------
+    # RIGHT: odds + sims
+    # -------------------------
+    with c2:
+        odds_mc = st.number_input(
+            "Sportsbook Odds (e.g., -110)",
+            value=-110,
+            step=5,
+            key="odds_mc"
+        )
+        sims_mc = st.slider(
+            "Number of Simulations",
+            1000, 20000, 10000, 1000,
+            key="sims_mc"
+        )
+
+    # -------------------------
+    # RUN SIM BUTTON
+    # -------------------------
+    if st.button("Run Simulation", key="run_mc") and mc_text.strip():
+        parsed = parse_input_line(mc_text)
+
+        if not parsed or not parsed["player"]:
+            st.warning("Could not parse player / stat from input.")
         else:
-            player_mc = None
-
-
-    # -----------------------
-    # RUN THE SIM
-    # -----------------------
-    if run_mc and player_mc:
-
-        logs_df = get_league_player_logs(season_mc)
-        player_logs = logs_df[logs_df["PLAYER_ID"] == pid_mc]
-
-        if player_logs.empty:
-            st.warning("No data for this player.")
-            st.stop()
-
-        # build PRA if selected
-        if stat_mc == "PRA":
-            player_logs["PRA"] = (
-                player_logs["PTS"].fillna(0)
-                + player_logs["REB"].fillna(0)
-                + player_logs["AST"].fillna(0)
-            )
-
-        ser = compute_stat_series(player_logs, stat_mc).dropna()
-
-        if ser.empty:
-            st.warning("Not enough stat history.")
-            st.stop()
-
-
-        # -------------------------------------------------------
-        # PREDICTIVE MONTE CARLO (KERNEL-SMOOTHED)
-        # -------------------------------------------------------
-        def monte_carlo_predictive(series, n_sims=10000):
-            vals = pd.to_numeric(series, errors="coerce").dropna().values
-            if len(vals) == 0:
-                return np.array([])
-
-            mean = np.mean(vals)
-            std = np.std(vals)
-
-            if std == 0:
-                return np.full(n_sims, mean)
-
-            # bandwidth (Silverman's rule)
-            n = len(vals)
-            bandwidth = 1.06 * std * n ** (-1/5)
-
-            base = np.random.choice(vals, size=n_sims, replace=True)
-            noise = np.random.normal(0, bandwidth, size=n_sims)
-
-            draws = base + noise
-            draws = np.clip(draws, 0, None)
-            return draws
-
-
-        draws = monte_carlo_predictive(ser, sims_mc)
-
-
-        # -------------------------------------------------------
-        # HIT PROBABILITY
-        # -------------------------------------------------------
-        if is_over:
-            hit_prob = np.mean(draws > thr)
-        else:
-            hit_prob = np.mean(draws < thr)
-
-
-        # -------------------------------------------------------
-        # FAIR ODDS
-        # -------------------------------------------------------
-        def prob_to_american(p):
-            if p == 0:
-                return "+∞"
-            if p == 1:
-                return "-∞"
-            if p > 0.5:
-                return f"{-int((p / (1 - p)) * 100)}"
+            pid = get_player_id(parsed["player"])
+            if not pid:
+                st.warning("Could not find that player in the NBA database.")
             else:
-                return f"+{int(((1 - p) / p) * 100)}"
+                # fetch logs (regular season only for now)
+                df = fetch_gamelog(pid, seasons_mc, include_playoffs=False, only_playoffs=False)
+                d = df.copy()
+                d = d[d["MIN_NUM"] >= min_min_mc]
 
-        fair_odds = prob_to_american(hit_prob)
+                # location filter
+                if loc_mc == "Home Only":
+                    d = d[d["MATCHUP"].astype(str).str.contains("vs", regex=False)]
+                elif loc_mc == "Away":
+                    d = d[d["MATCHUP"].astype(str).str.contains("@", regex=False)]
 
+                # sort & last N
+                d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
 
-        # -------------------------------------------------------
-        # EV CALCULATION
-        # -------------------------------------------------------
-        def american_to_prob(odds):
-            odds = int(odds)
-            if odds > 0:
-                return 100 / (odds + 100)
-            else:
-                return -odds / (-odds + 100)
+                ser = compute_stat_series(d, parsed["stat"])
+                draws = monte_carlo_predictive(ser, n_sims=sims_mc)
 
-        sb_prob = american_to_prob(sb_odds)
-        ev = hit_prob - sb_prob
+                if draws.size == 0:
+                    st.warning("No valid stat data to simulate from.")
+                else:
+                    thr = parsed["thr"]
+                    direction = parsed["dir"]
 
+                    # ----------------------------
+                    # Hit probability
+                    # ----------------------------
+                    if direction == "Under":
+                        p_hit = float((draws <= thr).mean())
+                    else:
+                        p_hit = float((draws >= thr).mean())
 
-        # ======================================================
-        # DISTRIBUTION SUMMARY CARD (🔥 ELITE)
-        # ======================================================
-        mean_val = np.mean(draws)
-        median_val = np.median(draws)
-        p10 = np.percentile(draws, 10)
-        p90 = np.percentile(draws, 90)
-        stdev = np.std(draws)
+                    # ----------------------------
+                    # Fair odds & EV
+                    # ----------------------------
+                    fair_odds = prob_to_american(p_hit)
+                    book_prob = american_to_implied(odds_mc)
+                    ev_pct = None
+                    if book_prob is not None:
+                        ev_pct = (p_hit - book_prob) * 100.0
 
-        summary_html = f"""
-        <style>
-        .summary-card {{
-            background-color: #0f291e;
-            padding: 20px;
-            border-radius: 12px;
-            border: 1px solid #1e3a2f;
-            margin-top: 10px;
-        }}
-        .summary-title {{
-            font-size: 1.15rem;
-            font-weight: 700;
-            color: #d1fae5;
-            margin-bottom: 10px;
-        }}
-        .summary-grid {{
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-        }}
-        .summary-item {{
-            background-color: #15342a;
-            padding: 12px 14px;
-            border-radius: 10px;
-            border: 1px solid #1e4d3b;
-        }}
-        .summary-label {{
-            font-size: 0.8rem;
-            color: #9ca3af;
-        }}
-        .summary-value {{
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #f0fdf4;
-        }}
-        </style>
+                    stat_label = STAT_LABELS.get(parsed["stat"], parsed["stat"])
+                    dir_short = "O" if direction == "Over" else "U"
+                    hit_str = f"{p_hit*100:.1f}%"
+                    ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"
 
-        <div class="summary-card">
-            <div class="summary-title">📊 Distribution Summary</div>
-            <div class="summary-grid">
+                    cls = "neutral"
+                    if ev_pct is not None:
+                        cls = "pos" if ev_pct >= 0 else "neg"
 
-                <div class="summary-item">
-                    <div class="summary-label">Mean</div>
-                    <div class="summary-value">{mean_val:.1f}</div>
-                </div>
+                    # ============================
+                    # MAIN RESULT CARD
+                    # ============================
+                    st.markdown(f"""
+<div class="card {cls}">
+  <h2>🎲 Monte Carlo Result</h2>
+  <div class="cond">
+    {parsed["player"]} — {dir_short} {fmt_half(thr)} {stat_label} ({loc_mc}, last {last_n_mc} games)
+  </div>
+  <div class="row">
+    <div class="m"><div class="lab">Sim Hit Probability</div><div class="val">{hit_str}</div></div>
+    <div class="m"><div class="lab">Model Fair Odds</div><div class="val">{fair_odds}</div></div>
+    <div class="m"><div class="lab">Book Odds</div><div class="val">{odds_mc}</div></div>
+    <div class="m"><div class="lab">Expected Value</div><div class="val">{ev_str}</div></div>
+  </div>
+  <div style="margin-top:10px;">
+    <span class="chip">{('🔥 +EV (Monte Carlo)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV by simulation')}</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-                <div class="summary-item">
-                    <div class="summary-label">Median</div>
-                    <div class="summary-value">{median_val:.1f}</div>
-                </div>
+                    # ============================
+                    # DISTRIBUTION SUMMARY CARD
+                    # ============================
+                    mean_val = float(np.mean(draws))
+                    median_val = float(np.median(draws))
+                    p10 = float(np.percentile(draws, 10))
+                    p90 = float(np.percentile(draws, 90))
+                    stdev = float(np.std(draws))
 
-                <div class="summary-item">
-                    <div class="summary-label">Std Dev</div>
-                    <div class="summary-value">{stdev:.2f}</div>
-                </div>
+                    summary_html = f"""
+<style>
+.summary-card {{
+    background-color: #0f291e;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid #1e3a2f;
+    margin-top: 10px;
+}}
+.summary-title {{
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #d1fae5;
+    margin-bottom: 10px;
+}}
+.summary-grid {{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}}
+.summary-item {{
+    background-color: #15342a;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #1e4d3b;
+}}
+.summary-label {{
+    font-size: 0.8rem;
+    color: #9ca3af;
+}}
+.summary-value {{
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #f0fdf4;
+}}
+</style>
 
-                <div class="summary-item">
-                    <div class="summary-label">10th Percentile</div>
-                    <div class="summary-value">{p10:.1f}</div>
-                </div>
+<div class="summary-card">
+    <div class="summary-title">📊 Distribution Summary</div>
+    <div class="summary-grid">
 
-                <div class="summary-item">
-                    <div class="summary-label">90th Percentile</div>
-                    <div class="summary-value">{p90:.1f}</div>
-                </div>
-
-                <div class="summary-item">
-                    <div class="summary-label">Sim Hit Probability</div>
-                    <div class="summary-value">{hit_prob*100:.1f}%</div>
-                </div>
-
-            </div>
+        <div class="summary-item">
+            <div class="summary-label">Mean</div>
+            <div class="summary-value">{mean_val:.1f}</div>
         </div>
-        """
 
-        st.markdown(summary_html, unsafe_allow_html=True)
+        <div class="summary-item">
+            <div class="summary-label">Median</div>
+            <div class="summary-value">{median_val:.1f}</div>
+        </div>
 
+        <div class="summary-item">
+            <div class="summary-label">Std Dev</div>
+            <div class="summary-value">{stdev:.2f}</div>
+        </div>
 
-        # ======================================================
-        # HISTOGRAM
-        # ======================================================
-        fig, ax = plt.subplots(figsize=(6, 3))
-        fig.patch.set_facecolor("#1e1f22")
-        ax.set_facecolor("#1e1f22")
+        <div class="summary-item">
+            <div class="summary-label">10th Percentile</div>
+            <div class="summary-value">{p10:.1f}</div>
+        </div>
 
-        ax.hist(draws, bins=25, color="#00c896", alpha=0.75,
-                edgecolor="#d1d5db", linewidth=0.4)
+        <div class="summary-item">
+            <div class="summary-label">90th Percentile</div>
+            <div class="summary-value">{p90:.1f}</div>
+        </div>
 
-        ax.axvline(thr, color="#ff6666", linestyle="--", linewidth=1.8)
+        <div class="summary-item">
+            <div class="summary-label">Sim Hit Probability</div>
+            <div class="summary-value">{p_hit*100:.1f}%</div>
+        </div>
 
-        ax.set_xlabel(stat_mc, color="#e5e7eb")
-        ax.set_ylabel("Simulated Frequency", color="#e5e7eb")
+    </div>
+</div>
+"""
+                    st.markdown(summary_html, unsafe_allow_html=True)
 
-        ax.tick_params(colors="#9ca3af")
-        for spine in ax.spines.values():
-            spine.set_edgecolor("#4b5563")
+                    # ============================
+                    # HISTOGRAM
+                    # ============================
+                    fig, ax = plt.subplots(figsize=(6, 3))
+                    fig.patch.set_facecolor("#1e1f22")
+                    ax.set_facecolor("#1e1f22")
 
-        st.pyplot(fig, use_container_width=True)
+                    ax.hist(draws, bins=25, color="#00c896", alpha=0.75,
+                            edgecolor="#d1d5db", linewidth=0.4)
+
+                    ax.axvline(thr, color="#ff6666", linestyle="--", linewidth=1.8)
+
+                    ax.set_xlabel(stat_label, color="#e5e7eb")
+                    ax.set_ylabel("Simulated Frequency", color="#e5e7eb")
+
+                    ax.tick_params(colors="#9ca3af")
+                    for spine in ax.spines.values():
+                        spine.set_edgecolor("#4b5563")
+
+                    st.pyplot(fig, use_container_width=True)
 
 
 # =========================
