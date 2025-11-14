@@ -669,6 +669,51 @@ def sparkline(values, thr):
     img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return f'<img src="data:image/png;base64,{img_b64}" style="width:100%;height:22px;opacity:0.9;" />'
 
+@st.cache_data(show_spinner=False)
+def get_current_season_str():
+    now = datetime.now()
+    year = now.year if now.month >= 8 else now.year - 1
+    return f"{year}-{str(year+1)[-2:]}"
+
+@st.cache_data(show_spinner=True)
+def load_team_logs(season: str) -> pd.DataFrame:
+    """Fetch team-level game logs (one row per team per game)."""
+    df = leaguegamelog.LeagueGameLog(
+        season=season,
+        season_type_all_star="Regular Season",
+        player_or_team_abbreviation="T",
+        timeout=60
+    ).get_data_frames()[0]
+
+    for k in ["PTS", "REB", "AST", "FG3M"]:
+        if k in df.columns:
+            df[k] = pd.to_numeric(df[k], errors="coerce")
+
+    df["OPP"] = (
+        df["MATCHUP"].astype(str)
+        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1).iloc[:, 0]
+    )
+    return df
+
+def get_team_color(team_abbr):
+    color_map = {
+        "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#000000", "CHA": "#1D1160", "CHI": "#CE1141",
+        "CLE": "#860038", "DAL": "#00538C", "DEN": "#0E2240", "DET": "#C8102E", "GSW": "#1D428A",
+        "HOU": "#CE1141", "IND": "#002D62", "LAC": "#C8102E", "LAL": "#552583", "MEM": "#5D76A9",
+        "MIA": "#98002E", "MIL": "#00471B", "MIN": "#0C2340", "NOP": "#0C2340", "NYK": "#006BB6",
+        "OKC": "#007AC1", "ORL": "#0077C0", "PHI": "#006BB6", "PHX": "#E56020", "POR": "#E03A3E",
+        "SAC": "#5A2D81", "SAS": "#C4CED4", "TOR": "#CE1141", "UTA": "#002B5C", "WAS": "#002B5C"
+    }
+    return color_map.get(team_abbr, "#999999")
+
+def soft_bg(hex_color, opacity=0.15):
+    try:
+        rgba = mcolors.to_rgba(hex_color, opacity)
+        return mcolors.to_hex(rgba)
+    except Exception:
+        return "#222222"
+    
 # -------------------------
 # Team constants & colors
 # -------------------------
@@ -1812,51 +1857,6 @@ with tab_me:
 from nba_api.stats.endpoints import leaguegamelog
 from datetime import datetime
 import matplotlib.colors as mcolors
-
-@st.cache_data(show_spinner=False)
-def get_current_season_str():
-    now = datetime.now()
-    year = now.year if now.month >= 8 else now.year - 1
-    return f"{year}-{str(year+1)[-2:]}"
-
-@st.cache_data(show_spinner=True)
-def load_team_logs(season: str) -> pd.DataFrame:
-    """Fetch team-level game logs (one row per team per game)."""
-    df = leaguegamelog.LeagueGameLog(
-        season=season,
-        season_type_all_star="Regular Season",
-        player_or_team_abbreviation="T",
-        timeout=60
-    ).get_data_frames()[0]
-
-    for k in ["PTS", "REB", "AST", "FG3M"]:
-        if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
-
-    df["OPP"] = (
-        df["MATCHUP"].astype(str)
-        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
-        .bfill(axis=1).iloc[:, 0]
-    )
-    return df
-
-def get_team_color(team_abbr):
-    color_map = {
-        "ATL": "#E03A3E", "BOS": "#007A33", "BKN": "#000000", "CHA": "#1D1160", "CHI": "#CE1141",
-        "CLE": "#860038", "DAL": "#00538C", "DEN": "#0E2240", "DET": "#C8102E", "GSW": "#1D428A",
-        "HOU": "#CE1141", "IND": "#002D62", "LAC": "#C8102E", "LAL": "#552583", "MEM": "#5D76A9",
-        "MIA": "#98002E", "MIL": "#00471B", "MIN": "#0C2340", "NOP": "#0C2340", "NYK": "#006BB6",
-        "OKC": "#007AC1", "ORL": "#0077C0", "PHI": "#006BB6", "PHX": "#E56020", "POR": "#E03A3E",
-        "SAC": "#5A2D81", "SAS": "#C4CED4", "TOR": "#CE1141", "UTA": "#002B5C", "WAS": "#002B5C"
-    }
-    return color_map.get(team_abbr, "#999999")
-
-def soft_bg(hex_color, opacity=0.15):
-    try:
-        rgba = mcolors.to_rgba(hex_color, opacity)
-        return mcolors.to_hex(rgba)
-    except Exception:
-        return "#222222"
 
 # integrate this tab with main: 
 # tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
