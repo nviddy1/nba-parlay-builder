@@ -12,7 +12,7 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 from datetime import datetime, timedelta
 import pytz
-from matplotlib.colors import to_rgba as mcolors
+from matplotlib.colors import to_rgba, to_hex
 
 def get_espn_scoreboard(date):
     """Fetch ESPN scoreboard data for a given date (YYYYMMDD)."""
@@ -106,7 +106,7 @@ def render_espn_banner(scoreboard):
             comp = game["competitions"][0]
             status = game["status"]["type"]["shortDetail"]
             t1 = comp["competitors"][0]  # Away
-            t2 = comp["competitors"][1]  # Home
+            t2 = comp["competitions"][1]  # Home
            
             def fmt_team(team):
                 team_dict = team["team"]
@@ -171,7 +171,6 @@ def render_espn_banner(scoreboard):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# Helper functions for Hot Matchups tab (assuming these are defined elsewhere in the full app; adding placeholders if needed)
 def get_current_season_str():
     return "2025-26"  # Placeholder; update as needed
 
@@ -179,7 +178,10 @@ def load_team_logs(season):
     # Placeholder: Load from leaguegamelog or similar
     lg = leaguegamelog.LeagueGameLog(season=season, season_type_all_star="Regular Season")
     df = lg.get_data_frames()[0]
-    df["OPP"] = df["Matchup"].str.extract(r'(@|vs)\s*(\w{3})', expand=False)[1]
+    # Fixed regex to handle non-matching rows
+    opponent_match = df["Matchup"].str.extract(r'(@|vs)\s*([A-Z]{3})', expand=False)
+    df["OPP"] = opponent_match.iloc[:, 1] if opponent_match.shape[1] > 1 else pd.Series(dtype=str)
+    df["OPP"] = df["OPP"].fillna('')  # Fill NaN with empty string to avoid KeyError
     return df
 
 def get_team_color(team_abbr):
@@ -195,8 +197,8 @@ def get_team_color(team_abbr):
 
 def soft_bg(hex_color, opacity=0.15):
     try:
-        rgba = mcolors.to_rgba(hex_color, opacity)
-        return mcolors.to_hex(rgba)
+        rgba = to_rgba(hex_color, opacity)
+        return to_hex(rgba)
     except Exception:
         return "#222222"
 
@@ -225,19 +227,11 @@ render_espn_banner(scoreboard)
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
 
-# Tabs (from the full app)
+# integrate this tab with main: 
+# tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
+
 tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
 
-# Placeholder for Parlay Builder and Breakeven tabs (add your content here)
-with tab_builder:
-    st.subheader("🧮 Parlay Builder")
-    st.info("Parlay builder content goes here.")
-
-with tab_breakeven:
-    st.subheader("🧷 Breakeven")
-    st.info("Breakeven calculator content goes here.")
-
-# Hot Matchups tab
 with tab_matchups:
     st.subheader("📈 Hot Matchups — Team Defensive Averages (Per Game)")
     st.caption("Based on NBA team game logs. Sorted from weakest (top) to strongest (bottom) defense.")
