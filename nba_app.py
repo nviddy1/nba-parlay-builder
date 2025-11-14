@@ -11,6 +11,33 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 import datetime
 
+@st.cache_data(ttl=300)
+def get_today_games():
+    today = datetime.date.today().strftime("%Y%m%d")
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={today}"
+
+    try:
+        events = requests.get(url, timeout=10).json().get("events", [])
+    except:
+        return []
+
+    games = []
+    for game in events:
+        comp = game["competitions"][0]
+        teams = comp["competitors"]
+
+        away = [t for t in teams if t["homeAway"] == "away"][0]
+        home = [t for t in teams if t["homeAway"] == "home"][0]
+
+        games.append({
+            "away": away["team"]["abbreviation"],
+            "away_logo": away["team"].get("logo"),
+            "home": home["team"]["abbreviation"],
+            "home_logo": home["team"].get("logo"),
+            "tipoff": game["date"],  # full datetime
+        })
+
+    return games
 
 # =========================
 # PAGE CONFIG
@@ -262,34 +289,6 @@ STAT_TOKENS = {
     "RA": "R+A",
     "PRA": "PRA"
 }
-
-@st.cache_data(ttl=300)
-def get_today_games():
-    today = datetime.date.today().strftime("%Y%m%d")
-    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={today}"
-
-    try:
-        events = requests.get(url, timeout=10).json().get("events", [])
-    except:
-        return []
-
-    games = []
-    for game in events:
-        comp = game["competitions"][0]
-        teams = comp["competitors"]
-
-        away = [t for t in teams if t["homeAway"] == "away"][0]
-        home = [t for t in teams if t["homeAway"] == "home"][0]
-
-        games.append({
-            "away": away["team"]["abbreviation"],
-            "away_logo": away["team"].get("logo"),
-            "home": home["team"]["abbreviation"],
-            "home_logo": home["team"].get("logo"),
-            "tipoff": game["date"],  # full datetime
-        })
-
-    return games
 
 @st.cache_data
 def get_all_player_names():
