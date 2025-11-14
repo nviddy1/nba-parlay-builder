@@ -9,6 +9,7 @@ from rapidfuzz import process
 from nba_api.stats.endpoints import leaguegamelog, commonplayerinfo
 import re
 import time
+from datetime import datetime
 from nba_api.stats.library.parameters import SeasonAll
 from requests.exceptions import ReadTimeout
 
