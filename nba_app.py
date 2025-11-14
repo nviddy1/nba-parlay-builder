@@ -11,37 +11,40 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 from datetime import datetime
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=120)
 def get_espn_games(date_str):
-    """Return ESPN-style scoreboard data for a given YYYYMMDD date."""
-    url = f"https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/scoreboard?dates={date_str}"
+    """
+    Works for ESPN today + next 2 days schedule.
+    date_str must be YYYYMMDD
+    """
+    url = (
+        f"https://site.web.api.espn.com/apis/v2/sports/basketball/nba/scoreboard"
+        f"?dates={date_str}&region=us&lang=en"
+    )
 
     r = requests.get(url, timeout=10)
     if r.status_code != 200:
         return []
 
     data = r.json()
-
     events = data.get("events", [])
     games = []
 
     for ev in events:
-        # Follow event link
-        ev_data = requests.get(ev.get("$ref")).json()
-        comp = ev_data["competitions"][0]
+        comp = ev["competitions"][0]
+        competitors = comp["competitors"]
 
         status = comp["status"]["type"]["shortDetail"]
         game_time = comp["status"]["type"]["detail"]
 
-        competitors = comp["competitors"]
-
         def parse_team(t):
-            team_info = requests.get(t["team"]["$ref"]).json()
-            logo = team_info.get("logos", [{}])[0].get("href")
+            team = t["team"]
+            logo = team.get("logo") or (team.get("logos") or [{}])[0].get("href")
+            record = t.get("records", [{}])[0].get("summary", "")
 
             return {
-                "abbr": team_info.get("abbreviation", ""),
-                "record": t.get("records", [{}])[0].get("summary", ""),
+                "abbr": team.get("abbreviation", ""),
+                "record": record,
                 "logo": logo,
                 "score": t.get("score"),
                 "homeAway": t.get("homeAway"),
@@ -50,16 +53,16 @@ def get_espn_games(date_str):
         team1 = parse_team(competitors[0])
         team2 = parse_team(competitors[1])
 
-        games.append({
-            "time": game_time,
-            "status": status,
-            "team1": team1,
-            "team2": team2
-        })
+        games.append(
+            {
+                "time": game_time,
+                "status": status,
+                "team1": team1,
+                "team2": team2,
+            }
+        )
 
     return games
-
-
 
 # =========================
 # PAGE CONFIG
