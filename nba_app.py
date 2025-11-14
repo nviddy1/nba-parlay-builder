@@ -93,28 +93,29 @@ def render_espn_banner(scoreboard):
             margin: 0 8px;
             white-space: nowrap;
         }
-        /* Style for Streamlit selectbox to look like a card */
-        .date-select-container {
+        /* Style the selectbox to look like a game card */
+        .date-filter-card .stSelectbox > div > div > select {
+            background: #1e1e1e !important;
+            border: 1px solid #333 !important;
+            border-radius: 10px !important;
+            color: #fff !important;
+            font-size: 14px !important;
+            font-weight: bold !important;
+            text-align: center !important;
+            padding: 8px 12px !important;
+            min-width: 100px !important;
+            cursor: pointer !important;
+        }
+        .date-filter-card .stSelectbox > label {
+            display: none !important;
+        }
+        .date-filter-card {
             background: #1e1e1e;
-            padding: 12px 16px;
             border-radius: 10px;
             border: 1px solid #333;
-            min-width: 120px;
-            margin-right: 16px;
-            text-align: center;
-        }
-        .date-select-container .stSelectbox > div > div > select {
-            background: none;
-            border: none;
-            color: #fff;
-            font-size: 14px;
-            font-weight: bold;
-            text-align: center;
-            cursor: pointer;
-            width: 100%;
-        }
-        .date-select-container .stSelectbox > label {
-            display: none;
+            padding: 4px;
+            margin-bottom: 0;
+            align-self: flex-start;
         }
         </style>
         """,
@@ -199,7 +200,7 @@ def render_espn_banner(scoreboard):
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
 st.markdown("🏀 NBA Player Prop Tools")
 
-# --- Date Selector integrated as left "card" ---
+# --- Date Selector styled as left card ---
 today = datetime.now().date()
 date_range = [
     (today.strftime("%b %d"), today.strftime("%Y%m%d")),
@@ -208,7 +209,7 @@ date_range = [
 ]
 date_labels = [label for label, _ in date_range]
 date_dict = {label: date_str for label, date_str in date_range}
-chosen_label = st.selectbox("", options=date_labels, index=0, key="date_filter")
+chosen_label = st.selectbox("", options=date_labels, index=0, key="date_filter", help=None)
 chosen_date = date_dict[chosen_label]
 
 # --- Fetch ESPN games ---
@@ -218,7 +219,7 @@ def fetch_scoreboard_cached(date_str):
 
 scoreboard = fetch_scoreboard_cached(chosen_date)
 
-# --- Render banner (games only; date is handled by selectbox above) ---
+# --- Render banner (games only) ---
 render_espn_banner(scoreboard)
 
 # Divider before your tabs
