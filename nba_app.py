@@ -21,129 +21,137 @@ st.title("🏀 NBA Player Prop Tools")
 # =========================
 st.markdown("""
 <style>
-:root {
-  --bg: #0e0f11;
-  --text: #f9fafb;
-  --muted: #9ca3af;
-  --card: #1a1b1e;
-  --border: #32353b;
-  --accent: #00c896;
+
+/* ===========================
+   MONTE CARLO RESULT CARD
+=========================== */
+
+.mc-card {
+    background: #062a26;
+    padding: 28px 32px;
+    border-radius: 18px;
+    border: 1px solid rgba(0,255,200,0.25);
+    margin-top: 16px;
+    margin-bottom: 24px;
 }
-body, .block-container {
-  background: var(--bg);
-  color: var(--text);
+
+.mc-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 6px;
 }
-/* Buttons */
-.stButton > button {
-  background: var(--accent) !important;
-  color: #0b1220 !important;
-  border: none !important;
-  border-radius: 10px !important;
-  font-weight: 700 !important;
-  padding: 8px 14px !important;
-  font-size: 0.9rem !important;
-  box-shadow: 0 6px 18px rgba(0,200,150,0.25) !important;
+
+.mc-sub {
+    font-size: 1rem;
+    opacity: 0.75;
+    margin-bottom: 18px;
 }
-/* Expander */
-.stExpander {
-  border: 1px solid var(--border) !important;
-  background: var(--card) !important;
-  border-radius: 12px !important;
+
+.mc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+    margin-top: 10px;
 }
-.streamlit-expanderHeader {
-  font-weight: 800 !important;
-  color: var(--text) !important;
-  font-size: 0.95rem !important;
+
+.mc-mini {
+    background: rgba(255,255,255,0.04);
+    padding: 16px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.06);
 }
-/* Inputs */
-input, select, textarea {
-  background: #202225 !important;
-  color: var(--text) !important;
-  border: 1px solid #3b3f45 !important;
-  border-radius: 8px !important;
-  font-size: 0.9rem !important;
-  padding: 6px !important;
+
+.mc-label {
+    font-size: 0.85rem;
+    opacity: 0.65;
+    margin-bottom: 6px;
 }
-/* Cards */
-.card {
-  --pad-x: 20px;
-  --pad-y: 18px;
-  padding: var(--pad-y) var(--pad-x);
-  border-radius: 14px;
-  margin: 10px 0 20px 0;
-  border: 1px solid var(--card-border);
-  background: var(--card-bg);
-  box-shadow: 0 0 14px rgba(0,0,0,0.25);
-  width: 100%;
+
+.mc-value {
+    font-size: 1.5rem;
+    font-weight: 700;
 }
-.neutral {
-  --card-bg:#222;
-  --card-border:#777;
+
+.mc-value.pos {
+    color: #4cffb8;
 }
-.pos {
-  --card-bg:#0b3d23;
-  --card-border:#00FF99;
+
+.mc-value.neg {
+    color: #ff4c61;
 }
-.neg {
-  --card-bg:#3d0b0b;
-  --card-border:#FF5555;
+
+/* ===========================
+   DISTRIBUTION SUMMARY CARD
+=========================== */
+
+.dist-card {
+    background: #111;
+    padding: 28px 32px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+    margin-top: 30px;
 }
-.card h2 {
-  color:#fff;
-  margin:0 0 6px 0;
-  font-weight:800;
-  font-size:1.05rem;
+
+.dist-title {
+    font-size: 1.45rem;
+    font-weight: 700;
+    margin-bottom: 22px;
+    display: flex;
+    align-items: center;
 }
-.cond {
-  color:#a9b1bb;
-  font-size:0.9rem;
-  margin: 2px 0 10px 0;
+
+.dist-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 26px 34px;
 }
-.row {
-  display:flex;
-  flex-wrap:wrap;
-  gap:10px;
-  align-items:flex-end;
-  justify-content:space-between;
-  margin: 6px 0 4px 0;
+
+.dist-item {
+    background: rgba(255,255,255,0.03);
+    padding: 18px 20px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.05);
 }
-.m {
-  min-width:120px;
-  flex:1;
+
+.dist-label {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    margin-bottom: 6px;
 }
-.lab {
-  color:#cbd5e1;
-  font-size:0.8rem;
-  margin-bottom:2px;
+
+.dist-value {
+    font-size: 1.8rem;
+    font-weight: 700;
 }
-.val {
-  color:#fff;
-  font-size:1.1rem;
-  font-weight:800;
-  line-height:1.1;
+
+.dist-footnote {
+    margin-top: 20px;
+    font-size: 0.82rem;
+    opacity: 0.55;
 }
-.chip {
-  display:inline-block;
-  margin-top:10px;
-  padding:6px 12px;
-  border-radius:999px;
-  font-size:0.8rem;
-  color:#a7f3d0;
-  border:1px solid #16a34a33;
-  background: transparent;
+
+/* Responsive layout */
+@media(max-width: 900px) {
+    .dist-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .mc-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
-/* Simple table polish for Breakeven tab */
-table {
-  border-collapse: collapse;
+
+@media(max-width: 600px) {
+    .dist-grid {
+        grid-template-columns: repeat(1, 1fr);
+    }
+    .mc-grid {
+        grid-template-columns: repeat(1, 1fr);
+    }
 }
-thead th {
-  border-bottom: 1px solid #374151 !important;
-}
-tbody td, thead th {
-  padding: 8px 10px !important;
-}
+
 </style>
 """, unsafe_allow_html=True)
+
 
 # =========================
 # CONSTANTS & HELPERS
