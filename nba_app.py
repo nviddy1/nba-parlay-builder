@@ -145,13 +145,13 @@ def render_espn_banner(scoreboard):
                 <div class="espn-time">{time_str}{tv}</div>
                 <div class="espn-matchup">
                     <div class="espn-team">
-                        <img src="{away_logo}" alt="{away_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/background/'.replace('/background/', '/scoreboard/') + '{away_abbr.lower()}.png'">
+                        <img src="{away_logo}" alt="{away_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away_abbr.lower()}.png'">
                         <div class="espn-team-abbr">{away_abbr}</div>
                         <div class="espn-record">{away_record}</div>
                     </div>
                     <div class="espn-at">@</div>
                     <div class="espn-team">
-                        <img src="{home_logo}" alt="{home_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/background/'.replace('/background/', '/scoreboard/') + '{home_abbr.lower()}.png'">
+                        <img src="{home_logo}" alt="{home_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home_abbr.lower()}.png'">
                         <div class="espn-team-abbr">{home_abbr}</div>
                         <div class="espn-record">{home_record}</div>
                     </div>
@@ -159,7 +159,7 @@ def render_espn_banner(scoreboard):
             </div>
             """
             html += snippet
-            st.debug(f"Successfully rendered game {i+1}: {away_abbr} @ {home_abbr}")  # Debug, remove later if noisy
+            # Removed st.debug() as Streamlit doesn't support it
         except Exception as e:
             st.error(f"Error rendering game {i+1}: {str(e)}")
             # Skip or add placeholder
