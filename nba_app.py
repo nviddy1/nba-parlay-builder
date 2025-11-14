@@ -98,7 +98,6 @@ def render_espn_banner(scoreboard):
     )
     html = '<div class="espn-banner-container">'
     events = scoreboard["events"]
-    st.info(f"Found {len(events)} games for the selected date.")  # Debug info
     for i, game in enumerate(events):
         try:
             comp = game["competitions"][0]
