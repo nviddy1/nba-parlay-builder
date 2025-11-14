@@ -1156,23 +1156,22 @@ with tab_mc:
 
     # ---- Bet Input ----
     mc_text = st.text_input(
-        "Prop (e.g., 'Maxey O 29.5 PTS Away -110')",
-        placeholder="Enter player + O/U + line + stat + location + odds"
+        "Prop (e.g., 'LeBron James O 25.5 PTS Home -110')",
+        placeholder="Enter player + O/U + line + stat + location + odds",
+        help="Parser handles shortcuts: O/U, PTS/REB/AST/etc, Home/Away/All, odds like -110 or +120"
     )
 
     # ---- Filters ----
     seasons_mc = st.multiselect(
         "Seasons",
-        ["2025-26","2024-25","2023-24","2022-23"],
-        default=["2025-26","2024-25"]
+        ["2024-25","2023-24","2022-23","2021-22"],
+        default=["2024-25","2023-24"]
     )
     last_n_mc = st.slider("Last N Games", 5, 100, 20)
     min_min_mc = st.slider("Min Minutes", 0, 40, 20)
     sims_mc    = st.slider("Number of Simulations", 2000, 50000, 15000, 2000)
 
-    # ==========================================
-    # ---------- Predictive Monte Carlo ----------
-    # ==========================================
+    # Predictive MC function (local)
     def mc_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
         vals = pd.to_numeric(series, errors="coerce").dropna().values
         if len(vals) == 0:
@@ -1184,7 +1183,6 @@ with tab_mc:
         if σ == 0 or len(vals) == 1:
             return np.full(n_sims, μ)
 
-        # Silverman's bandwidth
         n = len(vals)
         bw = 1.06 * σ * n ** (-1/5)
 
@@ -1194,56 +1192,56 @@ with tab_mc:
         draws = base + noise
         return np.clip(draws, 0, None)
 
-    # ==========================================
-    # ---------- Run Simulation ----------
-    # ==========================================
+    # Run button logic
     if st.button("Run Simulation") and mc_text.strip():
-
         parsed = parse_input_line(mc_text)
         if not parsed:
-            st.warning("Could not parse the input line.")
+            st.warning("Could not parse the input line. Check format (e.g., 'Curry O 5.5 3PM -110').")
             st.stop()
 
         pid = get_player_id(parsed["player"])
         if not pid:
-            st.warning("Player not found.")
+            st.warning(f"Player '{parsed['player']}' not found. Try full name (e.g., 'Stephen Curry').")
             st.stop()
 
-        # Fetch logs
+        # Fetch & filter (same as before)
         df = fetch_gamelog(pid, seasons_mc, include_playoffs=False, only_playoffs=False)
+        if df.empty:
+            st.warning("No game log data available for this player in the selected seasons. Try adding more seasons.")
+            st.stop()
+
         d = df.copy()
         d = d[d["MIN_NUM"] >= min_min_mc]
 
-        # Location filter
         if parsed["loc"] == "Home Only":
-            d = d[d["MATCHUP"].str.contains("vs")]
+            d = d[d["MATCHUP"].str.contains("vs", na=False)]
         elif parsed["loc"] == "Away":
-            d = d[d["MATCHUP"].str.contains("@")]
+            d = d[d["MATCHUP"].str.contains("@", na=False)]
 
         d = d.sort_values("GAME_DATE_DT", ascending=False).head(last_n_mc)
 
-        ser = compute_stat_series(d, parsed["stat"]).dropna()
-        if ser.empty:
-            st.warning("No valid stat history.")
+        if d.empty:
+            st.warning("No games matching the filters (e.g., min minutes, location). Loosen filters and try again.")
             st.stop()
 
-        # ---------- Monte Carlo ----------
+        ser = compute_stat_series(d, parsed["stat"]).dropna()
+        if ser.empty:
+            st.warning("No valid stat history after filters.")
+            st.stop()
+
+        # Simulate
         draws = mc_predictive(ser, sims_mc)
-
-        thr   = parsed["thr"]
+        thr = parsed["thr"]
         direction = parsed["dir"]
-
         hit_prob = float((draws <= thr).mean()) if direction == "Under" else float((draws >= thr).mean())
         fair_odds = prob_to_american(hit_prob)
         book_odds = parsed["odds"]
         book_prob = american_to_implied(book_odds)
-        ev_pct = None if book_prob is None else (hit_prob - book_prob) * 100
+        edge_pct = None if book_prob is None else (hit_prob - book_prob) * 100
 
         stat_name = STAT_LABELS.get(parsed["stat"], parsed["stat"])
 
-        # ==========================================
-        # ---------- Result Card ----------
-        # ==========================================
+        # Result Card (keep your existing render_mc_result_card)
         st.markdown(
             render_mc_result_card(
                 parsed["player"],
@@ -1255,17 +1253,21 @@ with tab_mc:
                 hit_prob,
                 fair_odds,
                 book_odds,
-                ev_pct
+                edge_pct
             ),
             unsafe_allow_html=True
         )
 
-        # ==========================================
-        # ---------- Distribution Summary (Native) ----------
-        # ==========================================
-        st.subheader("📊 Distribution Summary")  # Simple header
+        # FIXED: Distribution Summary (compute vars inline, no HTML)
+        st.subheader("📊 Distribution Summary")
 
-        # Use columns for a 3-col grid (responsive)
+        # Define vars right here to avoid NameError
+        mean_val = float(np.mean(draws))
+        median_val = float(np.median(draws))
+        p10 = float(np.percentile(draws, 10))
+        p90 = float(np.percentile(draws, 90))
+        stdev = float(np.std(draws))
+
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -1280,24 +1282,22 @@ with tab_mc:
             st.metric("90th %ile", f"{p90:.1f}")
             st.metric("Sim Hit %", f"{hit_prob*100:.1f}%")
 
-        # Optional: Add a small note below
         st.caption("Based on smoothed Monte Carlo draws from historical data.")
 
-        # ==========================================
-        # ---------- Histogram ----------
-        # ==========================================
+        # Histogram (unchanged)
+        hist_color = "#00c896" if edge_pct is not None and edge_pct >= 0 else "#e05a5a"
         fig, ax = plt.subplots(figsize=(6, 3))
         fig.patch.set_facecolor("#1e1f22")
         ax.set_facecolor("#1e1f22")
 
         ax.hist(
             draws, bins=25,
-            color="#00c896", alpha=0.75,
+            color=hist_color, alpha=0.75,
             edgecolor="#d1d5db", linewidth=0.4
         )
-        ax.axvline(thr, color="#ff6666", linestyle="--", linewidth=1.8)
+        ax.axvline(thr, color="#ff6666" if direction == "Over" else "#00c896", linestyle="--", linewidth=1.8)
 
-        ax.set_xlabel(stat_name, color="#e5e7eb")
+        ax.set_xlabel(f"{stat_name} ({direction} {thr})", color="#e5e7eb")
         ax.set_ylabel("Frequency", color="#e5e7eb")
         ax.tick_params(colors="#9ca3af")
 
@@ -1306,7 +1306,7 @@ with tab_mc:
 
         st.pyplot(fig, use_container_width=True)
 
-
+        st.caption(f"💡 Simulations use historical variance + smoothing noise. Rerun for new random draws. Edge >0% = +EV bet.")
 
 # =========================
 # TAB 4: INJURY IMPACT ANALYZER
