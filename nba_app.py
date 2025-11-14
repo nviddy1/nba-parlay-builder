@@ -977,6 +977,89 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
     return html
 
+def render_matchup_exploiter():
+    st.markdown("""
+    <style>
+    .match-card {
+        background: #1c1c1c;
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid #333;
+        margin-bottom: 14px;
+    }
+    .match-header {
+        font-size: 22px;
+        font-weight: 800;
+        color: #fff;
+        margin-bottom: 6px;
+    }
+    .heat-score {
+        font-size: 17px;
+        font-weight: 700;
+        color: #ff5252;
+        margin-bottom: 8px;
+    }
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        background: #333;
+        border-radius: 6px;
+        margin-right: 6px;
+        font-size: 13px;
+        color: #ccc;
+    }
+    .prop-edge {
+        margin-top: 10px;
+        font-size: 15px;
+        color: #eee;
+        padding: 10px;
+        background: #222;
+        border-radius: 8px;
+        border: 1px solid #444;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
+
+    # -----------------------------
+    # TEMP PREVIEW DATA
+    # We replace this with real logic after
+    # -----------------------------
+    matchups = [
+        {
+            "game": "GSW @ LAL",
+            "heat": 92,
+            "badges": ["Pace Up", "Weak Interior Defense", "High Usage Δ"],
+            "edges": [
+                "Stephen Curry — Assists Over (+12% edge)",
+                "LeBron James — Rebounds Over (+9% edge)",
+            ]
+        },
+        {
+            "game": "BOS @ PHX",
+            "heat": 87,
+            "badges": ["High Total", "Weak PnR Defense", "Injury Boost"],
+            "edges": [
+                "Jayson Tatum — Points Over (+15% edge)",
+                "Bradley Beal — Assists Over (+11% edge)",
+            ]
+        }
+    ]
+
+    for m in matchups:
+        st.markdown(f"""
+        <div class="match-card">
+            <div class="match-header">{m['game']}</div>
+            <div class="heat-score">Heat Score: {m['heat']} / 100 🔥</div>
+            {''.join([f"<span class='badge'>{b}</span>" for b in m['badges']])}
+            <div class="prop-edge">
+                {'<br>'.join(m['edges'])}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
     # Add actual NBA In-Season Tournament dates here, e.g.,
