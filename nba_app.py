@@ -97,60 +97,73 @@ def render_espn_banner(scoreboard):
         unsafe_allow_html=True,
     )
     html = '<div class="espn-banner-container">'
-    for game in scoreboard["events"]:
-        comp = game["competitions"][0]
-        status = game["status"]["type"]["shortDetail"]
-        # Determine home/away: home is usually the second competitor if not specified
-        # ESPN API: competitor[1] is typically home
-        t1 = comp["competitors"][0]  # Away
-        t2 = comp["competitors"][1]  # Home
-        def fmt_team(team):
-            abbr = team["team"]["abbreviation"]
-            logo = team["team"]["logo"]
-            # Records: use current summary, fallback to empty
-            record = ""
-            if team.get("records") and len(team["records"]) > 0:
-                record = team["records"][0]["summary"]
-            return abbr, logo, record
-        
-        away_abbr, away_logo, away_record = fmt_team(t1)
-        home_abbr, home_logo, home_record = fmt_team(t2)
-        
-        # Time
-        start_time = datetime.fromisoformat(game["date"].replace("Z", "+00:00"))
-        est = start_time.astimezone(pytz.timezone("US/Eastern"))
-        time_str = est.strftime("%-I:%M %p ET")
-        
-        # TV network if available
-        tv = ""
-        if "broadcasts" in comp and len(comp["broadcasts"]) > 0:
-            tv_network = comp["broadcasts"][0].get("names", [""])[0]
-            if tv_network:
-                tv = f'<div class="tv">{tv_network}</div>'
-        
-        # For pre-game, show time; if in-progress/live, could add status but keeping simple for banner
-        if status.lower() in ["final", "in progress"]:
-            # For live/finished, adjust display (e.g., show score), but screenshot is pre-game
-            time_str = status  # Placeholder; expand as needed
-        
-        html += f"""
-        <div class="espn-game-card">
-            <div class="espn-time">{time_str}{tv}</div>
-            <div class="espn-matchup">
-                <div class="espn-team">
-                    <img src="{away_logo}" alt="{away_abbr}">
-                    <div class="espn-team-abbr">{away_abbr}</div>
-                    <div class="espn-record">{away_record}</div>
-                </div>
-                <div class="espn-at">@</div>
-                <div class="espn-team">
-                    <img src="{home_logo}" alt="{home_abbr}">
-                    <div class="espn-team-abbr">{home_abbr}</div>
-                    <div class="espn-record">{home_record}</div>
+    events = scoreboard["events"]
+    st.info(f"Found {len(events)} games for the selected date.")  # Debug info
+    for i, game in enumerate(events):
+        try:
+            comp = game["competitions"][0]
+            status = game["status"]["type"]["shortDetail"]
+            t1 = comp["competitors"][0]  # Away
+            t2 = comp["competitors"][1]  # Home
+            
+            def fmt_team(team):
+                team_dict = team["team"]
+                abbr = team_dict.get("abbreviation", "TBD")
+                logo = team_dict.get("logo", "") or f"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{abbr.lower()}.png"
+                record = ""
+                if team.get("records") and len(team["records"]) > 0:
+                    record = team["records"][0].get("summary", "")
+                return abbr, logo, record
+            
+            away_abbr, away_logo, away_record = fmt_team(t1)
+            home_abbr, home_logo, home_record = fmt_team(t2)
+            
+            # Time parsing with fallback
+            try:
+                start_time_str = game["date"].replace("Z", "+00:00")
+                start_time = datetime.fromisoformat(start_time_str)
+                est = start_time.astimezone(pytz.timezone("US/Eastern"))
+                time_str = est.strftime("%-I:%M %p ET")
+            except (ValueError, KeyError):
+                time_str = "TBD"
+            
+            # Status override for live/final
+            if status.lower() in ["final", "in progress", "live"]:
+                time_str = status.upper()
+            
+            # TV
+            tv = ""
+            if "broadcasts" in comp and len(comp["broadcasts"]) > 0:
+                tv_networks = [b.get("names", [""])[0] for b in comp["broadcasts"] if b.get("names")]
+                if tv_networks:
+                    tv_network = ", ".join(tv_networks[:2])  # First 1-2 networks
+                    tv = f'<div class="tv">{tv_network}</div>'
+            
+            # Build snippet
+            snippet = f"""
+            <div class="espn-game-card">
+                <div class="espn-time">{time_str}{tv}</div>
+                <div class="espn-matchup">
+                    <div class="espn-team">
+                        <img src="{away_logo}" alt="{away_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/background/'.replace('/background/', '/scoreboard/') + '{away_abbr.lower()}.png'">
+                        <div class="espn-team-abbr">{away_abbr}</div>
+                        <div class="espn-record">{away_record}</div>
+                    </div>
+                    <div class="espn-at">@</div>
+                    <div class="espn-team">
+                        <img src="{home_logo}" alt="{home_abbr}" onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/background/'.replace('/background/', '/scoreboard/') + '{home_abbr.lower()}.png'">
+                        <div class="espn-team-abbr">{home_abbr}</div>
+                        <div class="espn-record">{home_record}</div>
+                    </div>
                 </div>
             </div>
-        </div>
-        """
+            """
+            html += snippet
+            st.debug(f"Successfully rendered game {i+1}: {away_abbr} @ {home_abbr}")  # Debug, remove later if noisy
+        except Exception as e:
+            st.error(f"Error rendering game {i+1}: {str(e)}")
+            # Skip or add placeholder
+            continue
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
