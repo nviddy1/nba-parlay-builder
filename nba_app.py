@@ -691,7 +691,7 @@ def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, 
 </div>
 """
 
-def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, p_hit):
+def render_distribution_summary_card(mean_val, median_val, stdev, p10, p90, p_hit):
     return f"""
 <style>
 .summary-card {{
@@ -1262,7 +1262,7 @@ with tab_mc:
         stdev = float(np.std(draws))
 
         st.markdown(
-            render_mc_distribution_card(
+            render_distribution_summary_card(
                 mean_val, median_val, stdev, p10, p90, hit_prob
             ),
             unsafe_allow_html=True
