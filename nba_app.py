@@ -28,75 +28,98 @@ def render_espn_banner(scoreboard):
     st.markdown(
         """
         <style>
+
+        /* --- Bigger title --- */
+        h1, .main-title {
+            font-size: 52px !important;
+            font-weight: 900 !important;
+            margin-bottom: 4px !important;
+        }
+
+        /* --- Banner container smaller --- */
         .espn-banner-container {
             display: flex;
             overflow-x: auto;
             white-space: nowrap;
-            padding: 10px 0;
+            padding: 4px 0 !important;
+            gap: 6px !important;   /* very tight spacing */
             border-bottom: 1px solid #333;
-            gap: 16px;
         }
+
+        /* --- SUPER COMPACT GAME CARD --- */
         .espn-game-card {
             flex: 0 0 auto;
             display: flex;
             flex-direction: column;
             align-items: center;
+
             background: #1e1e1e;
-            padding: 12px 16px;
-            border-radius: 10px;
+            border-radius: 6px !important;
             border: 1px solid #333;
-            min-width: 220px;
+
+            padding: 3px 6px !important;     /* ultra small padding */
+            min-width: 120px !important;     /* was 220 → 150 → now 120 */
+            max-width: 120px !important;
+
+            gap: 2px !important;
         }
+
         .espn-time {
-            font-size: 12px;
-            color: #aaa;
-            margin-bottom: 8px;
+            font-size: 11px !important;
+            color: #bbb;
             text-align: center;
+            margin-bottom: 2px !important;
+            line-height: 1.1;
         }
-        .espn-time .tv {
-            font-size: 10px;
-            color: #ff9900;
-            margin-top: 2px;
-        }
+
         .espn-matchup {
             display: flex;
             align-items: center;
             justify-content: space-between;
             width: 100%;
-            margin-bottom: 4px;
+            margin-bottom: 0px !important;
+            line-height: 1;
         }
+
+        /* --- Smaller logos --- */
+        .espn-team img {
+            height: 20px !important;
+            width: 20px !important;
+            margin-bottom: 1px !important;
+        }
+
         .espn-team {
+            flex: 1;
             display: flex;
             flex-direction: column;
             align-items: center;
-            flex: 1;
+            gap: 0px !important;
         }
-        .espn-team img {
-            height: 32px;
-            width: 32px;
-            margin-bottom: 2px;
-        }
+
         .espn-team-abbr {
-            font-size: 14px;
-            font-weight: bold;
-            color: #fff;
-            margin-bottom: 2px;
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            margin-bottom: 0px !important;
         }
+
         .espn-record {
-            font-size: 11px;
+            font-size: 9px !important;
             color: #888;
+            line-height: 1;
         }
+
         .espn-at {
-            font-size: 16px;
-            color: #fff;
-            font-weight: bold;
-            margin: 0 8px;
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            margin: 0 4px !important;
             white-space: nowrap;
         }
+
         </style>
         """,
         unsafe_allow_html=True,
     )
+
     html = '<div class="espn-banner-container">'
     
     events = scoreboard["events"]
