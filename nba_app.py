@@ -692,20 +692,50 @@ def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, 
 """
 
 def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob):
-    return f"""
+
+    html = f"""
 <style>
-.mc-sum {{ background-color:#0f291e; padding:20px; border-radius:12px; border:1px solid #1e3a2f; margin-top:18px; }}
-.mc-sum-title {{ font-size:1.15rem; font-weight:700; color:#d1fae5; margin-bottom:12px; }}
-.mc-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }}
-.mc-sbox {{ background-color:#15342a; padding:12px 14px; border-radius:10px; border:1px solid #1e4d3b; }}
-.mc-slab {{ font-size:0.8rem; color:#9ca3af; margin-bottom:4px; }}
-.mc-sval {{ font-size:1.1rem; font-weight:600; color:#f0fdf4; }}
+.mc-sum {{
+    background-color:#0f291e;
+    padding:20px;
+    border-radius:12px;
+    border:1px solid #1e3a2f;
+    margin-top:18px;
+}}
+.mc-sum-title {{
+    font-size:1.15rem;
+    font-weight:700;
+    color:#d1fae5;
+    margin-bottom:12px;
+}}
+.mc-grid {{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:14px;
+}}
+.mc-sbox {{
+    background-color:#15342a;
+    padding:12px 14px;
+    border-radius:10px;
+    border:1px solid #1e4d3b;
+}}
+.mc-slab {{
+    font-size:0.8rem;
+    color:#9ca3af;
+    margin-bottom:4px;
+}}
+.mc-sval {{
+    font-size:1.1rem;
+    font-weight:600;
+    color:#f0fdf4;
+}}
 </style>
 
 <div class="mc-sum">
     <div class="mc-sum-title">📊 Distribution Summary</div>
 
     <div class="mc-grid">
+
         <div class="mc-sbox">
             <div class="mc-slab">Mean</div>
             <div class="mc-sval">{mean_val:.1f}</div>
@@ -735,9 +765,12 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
             <div class="mc-slab">Sim Hit %</div>
             <div class="mc-sval">{hit_prob*100:.1f}%</div>
         </div>
+
     </div>
 </div>
 """
+
+    return html
 
 
 
