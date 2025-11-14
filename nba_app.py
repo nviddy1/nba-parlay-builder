@@ -46,7 +46,7 @@ def render_espn_banner(scoreboard):
             border-bottom: 1px solid #333;
         }
 
-        /* --- COMPACT-MEDIUM CARD --- */
+        /* --- COMPACT-MEDIUM CARD (slightly wider now) --- */
         .espn-game-card {
             flex: 0 0 auto;
             display: flex;
@@ -57,23 +57,27 @@ def render_espn_banner(scoreboard):
             border-radius: 8px !important;
             border: 1px solid #333;
 
-            padding: 8px 12px !important;     /* up from 3px/6px */
-            min-width: 150px !important;      /* up from 120px */
-            max-width: 150px !important;
+            padding: 8px 12px !important;
+            min-width: 170px !important;    /* increased from 150 */
+            max-width: 170px !important;
 
             gap: 4px !important;
         }
 
-        /* --- Time / status --- */
+        /* --- Time / TV smaller (2 sizes down) --- */
         .espn-time {
-            font-size: 13px !important;       /* up from 11px */
+            font-size: 11px !important;     /* was 13 */
             color: #ccc;
             text-align: center;
             margin-bottom: 4px !important;
-            line-height: 1.15;
+            line-height: 1.1;
+        }
+        .espn-time .tv {
+            font-size: 9px !important;      /* was 11 → bumped down */
+            color: #ff9900;
+            margin-top: 1px;
         }
 
-        /* --- Matchup row --- */
         .espn-matchup {
             display: flex;
             align-items: center;
@@ -82,14 +86,13 @@ def render_espn_banner(scoreboard):
             margin-bottom: 2px !important;
         }
 
-        /* --- Logos slightly bigger --- */
+        /* --- Logos --- */
         .espn-team img {
-            height: 26px !important;          /* was 20px */
+            height: 26px !important;
             width: 26px !important;
             margin-bottom: 2px !important;
         }
 
-        /* --- Team column --- */
         .espn-team {
             flex: 1;
             display: flex;
@@ -98,23 +101,21 @@ def render_espn_banner(scoreboard):
             gap: 1px !important;
         }
 
-        /* --- Team abbreviation --- */
         .espn-team-abbr {
-            font-size: 14px !important;       /* was 12px */
+            font-size: 14px !important;
             font-weight: 700 !important;
             margin-bottom: 1px !important;
         }
 
-        /* --- Record --- */
+        /* --- Record 1 size bigger --- */
         .espn-record {
-            font-size: 10px !important;       /* slight bump */
+            font-size: 11px !important;    /* was 10 */
             color: #888;
             line-height: 1.05;
         }
 
-        /* --- @ symbol --- */
         .espn-at {
-            font-size: 14px !important;        /* up from 12 */
+            font-size: 14px !important;
             font-weight: 700 !important;
             margin: 0 6px !important;
             white-space: nowrap;
@@ -124,7 +125,6 @@ def render_espn_banner(scoreboard):
         """,
         unsafe_allow_html=True,
     )
-
 
     html = '<div class="espn-banner-container">'
     
