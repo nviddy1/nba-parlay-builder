@@ -6,14 +6,6 @@ import matplotlib.pyplot as plt
 from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
 from rapidfuzz import process
-from nba_api.stats.endpoints import leaguegamelog, commonplayerinfo
-import re
-import time
-from datetime import datetime
-from nba_api.stats.library.parameters import SeasonAll
-from requests.exceptions import ReadTimeout
-
-
 
 # =========================
 # PAGE CONFIG
@@ -405,11 +397,13 @@ def headshot_url(pid: int | None) -> str | None:
         return None
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{pid}.png"
 
-def get_team_logo_from_df(df: pd.DataFrame) -> str | None:
+def get_team_logo(player_id: int | None):
+    if not player_id:
+        return None
     try:
-        team_id = int(df["TEAM_ID"].iloc[0])
-        return f"https://cdn.nba.com/logos/nba/{team_id}/global/L/logo.svg"
-    except Exception:
+        # NBA CDN format for team logo
+        return f"https://cdn.nba.com/logos/nba/{player_id}/global/L/logo.svg"
+    except:
         return None
 
 def breakeven_for_stat(series: pd.Series) -> dict:
@@ -474,88 +468,10 @@ NBA_CUP_DATES = pd.to_datetime([
     # For 2025-26 season, placeholder empty for now
 ])
 
-@st.cache_data(show_spinner=False)
-def get_player_position(pid: int) -> str | None:
-    try:
-        df = commonplayerinfo.CommonPlayerInfo(player_id=pid).get_data_frames()[0]
-        pos = str(df.get("POSITION", "")).strip()
-        return pos if pos and pos != "None" else None
-    except Exception:
-        return None
-
-def position_matches(raw_pos: str | None, target: str) -> bool:
-    if not raw_pos:
-        return False
-    toks = set(re.split(r"[\/\-\s]+", raw_pos.upper()))
-    expanded = set()
-    for t in toks:
-        if t in {"PG","SG","SF","PF","C"}: expanded.add(t)
-        elif t == "G": expanded.update({"PG","SG"})
-        elif t == "F": expanded.update({"SF","PF"})
-        elif t in {"FC","F-C"}: expanded.update({"SF","PF","C"})
-        elif t in {"GF","G-F"}: expanded.update({"PG","SG","SF","PF"})
-    return target in expanded
-
-@st.cache_data(show_spinner=False)
-def get_current_season() -> str:
-    """Auto-detect current NBA season string like '2025-26'."""
-    now = datetime.now()
-    year = now.year
-    if now.month >= 10:  # season starts in October
-        return f"{year}-{str(year+1)[-2:]}"
-    else:
-        return f"{year-1}-{str(year)[-2:]}"
-
-@st.cache_data(show_spinner=False)
-def get_league_logs_current_season() -> pd.DataFrame:
-    """Single current-season pull with retry/timeout and caching."""
-    season = get_current_season()
-    for attempt in range(3):
-        try:
-            df = leaguegamelog.LeagueGameLog(
-                season=season,
-                season_type_all_star="Regular Season",
-                player_or_team_abbreviation="P",
-                timeout=60
-            ).get_data_frames()[0]
-            break
-        except ReadTimeout:
-            if attempt < 2:
-                time.sleep(3)
-                continue
-            else:
-                raise
-        except Exception as e:
-            st.warning(f"Error fetching {season}: {e}")
-            return pd.DataFrame()
-
-    for k in ["PTS","REB","AST","STL","BLK","FG3M"]:
-        if k in df.columns:
-            df[k] = pd.to_numeric(df[k], errors="coerce")
-    if "MIN" in df.columns:
-        df["MIN_NUM"] = df["MIN"].astype(str).str.split(":").str[0].astype(float)
-    if "GAME_DATE" in df.columns:
-        df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
-    df["OPP"] = df["MATCHUP"].astype(str).str.extract(r"vs\. (\w+)|@ (\w+)", expand=True).bfill(axis=1).iloc[:,0]
-    return df
-
-
-# Team color map (reuse in tables & chart)
-TEAM_COLORS = {
-    "ATL": "#E03A3E","BOS": "#007A33","BKN": "#000000","CHA": "#1D1160","CHI": "#CE1141",
-    "CLE": "#860038","DAL": "#00538C","DEN": "#0E2240","DET": "#C8102E","GSW": "#1D428A",
-    "HOU": "#CE1141","IND": "#002D62","LAC": "#C8102E","LAL": "#552583","MEM": "#5D76A9",
-    "MIA": "#98002E","MIL": "#00471B","MIN": "#0C2340","NOP": "#0C2340","NYK": "#F58426",
-    "OKC": "#007AC1","ORL": "#0077C0","PHI": "#006BB6","PHX": "#1D1160","POR": "#E03A3E",
-    "SAC": "#5A2D81","SAS": "#C4CED4","TOR": "#CE1141","UTA": "#002B5C","WAS": "#002B5C"
-}
-
-
-
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_defense = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🧱 Defensive Matrix"])
+tab_builder, tab_breakeven = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven"])
 
 # =========================
 # TAB 1: PARLAY BUILDER
@@ -915,78 +831,3 @@ with tab_breakeven:
                         "Under": f"{out['under_prob']*100:.1f}% ({out['under_odds']})"
                     })
                 st.table(pd.DataFrame(rows).set_index("Stat"))
-
-
-
-# =========================
-# TAB 3: DEFENSIVE MATRIX
-# =========================
-with tab_defense:
-    st.subheader("🧱 Defensive Matrix vs Position (Per 48 Min)")
-
-    position = st.selectbox("Position", ["PG","SG","SF","PF","C"], index=3)
-    stat_choice = st.selectbox("Stat", ["PTS","REB","AST","FG3M","STL","BLK","PRA"], index=0)
-    last_n_def = st.slider("Last N Games per Player", 5, 82, 20)
-    min_min_def = st.slider("Min Minutes per Game", 5, 40, 12)
-
-    if st.button("Compute Defensive Matrix"):
-        season = get_current_season()
-        st.write(f"⚡ Loading player logs for {season} (filtered)…")
-
-        # 1) Fetch once
-        base = get_league_logs_current_season()  # cached
-        if base.empty:
-            st.warning("No data pulled.")
-            st.stop()
-
-        # 2) Filter by minutes
-        df = base.dropna(subset=["OPP","MIN_NUM"])
-        df = df[df["MIN_NUM"] >= min_min_def]
-
-        # 3) For each player, last N games
-        df = df.sort_values(["PLAYER_ID","GAME_DATE_DT"], ascending=[True, False])
-        df["rn"] = df.groupby("PLAYER_ID").cumcount() + 1
-        df = df[df["rn"] <= last_n_def].drop(columns=["rn"])
-
-        # 4) Compute stat
-        if stat_choice == "PRA":
-            df["STAT"] = df["PTS"].fillna(0) + df["REB"].fillna(0) + df["AST"].fillna(0)
-        else:
-            df["STAT"] = df[stat_choice].fillna(0)
-        df["STAT_NUM"] = df["STAT"]
-        df["MINUTES"] = df["MIN_NUM"]
-
-        # 5) Map positions (via cache)
-        if "pos_cache" not in st.session_state:
-            st.session_state.pos_cache = {}
-        pos_cache = st.session_state.pos_cache
-        pids = df["PLAYER_ID"].unique().tolist()
-        missing = [pid for pid in pids if pid not in pos_cache]
-        if missing:
-            pb = st.progress(0)
-            for i, pid in enumerate(missing,1):
-                pos_cache[pid] = get_player_position(int(pid))
-                pb.progress(i/len(missing))
-            st.session_state.pos_cache = pos_cache
-        df["RAW_POS"] = df["PLAYER_ID"].map(pos_cache)
-
-        # 6) Filter for the chosen position
-        df = df[df["RAW_POS"].apply(lambda rp: position_matches(rp, position))]
-        if df.empty:
-            st.warning(f"No logs for position {position}.")
-            st.stop()
-
-        # 7) Aggregate by Opponent team
-        agg = df.groupby("OPP").agg({
-            "STAT_NUM": "sum",
-            "MINUTES": "sum"
-        }).reset_index()
-        agg = agg[agg["MINUTES"] > 0]
-        agg["VAL"] = (agg["STAT_NUM"] / agg["MINUTES"] * 48.0).round(1)
-        label = f"{stat_choice} Allowed per 48 min to {position}s"
-        df_summary = agg[["OPP","VAL"]].rename(columns={"VAL": label})
-        df_summary = df_summary.sort_values(label, ascending=False)
-
-        # 8) Display Top5 / Bottom5 and full matrix (as before)
-        # ... (reuse your existing color-coded output code)
-
