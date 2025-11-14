@@ -1346,6 +1346,7 @@ with tab_builder:
 # =========================
 with tab_breakeven:
     st.subheader("🔎 Breakeven Finder")
+    st.caption(f"See the breakeven (closest to even odds) value for each stat type")
 
     # Filters
     f1, f2 = st.columns([1.2, 1])
@@ -1436,6 +1437,7 @@ with tab_breakeven:
 # =========================
 with tab_mc:
     st.subheader("🎲 Monte Carlo Prop Simulator (Predictive)")
+    st.caption(f"Simulate a specific player prop to understand their dispersion and confidence intervals")
 
     # ---- Bet Input ----
     mc_text = st.text_input(
@@ -1596,7 +1598,8 @@ with tab_mc:
 # =========================
 with tab_injury:
     st.subheader("🩹 Injury Impact Analyzer")
-
+    st.caption(f"Search for an injured player to see how their team fares without them")
+    
     colL, colR = st.columns([1.2, 2])
 
     # --------------------------
@@ -1803,11 +1806,11 @@ with tab_injury:
 # =========================
 
 with tab_me:
-    st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
-
+    st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges - UNDER DEVELOPMENT: VALUES BELOW ARE NOT TRUTHFUL")
+    
     season = get_current_season_str()
 
-    st.caption(f"Season: {season}")
+    st.caption(f"Find exploitable matchups based on oppotnets tendencies")
 
     df = compute_matchup_edges(season)
     if df.empty:
