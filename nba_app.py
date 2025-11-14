@@ -21,7 +21,7 @@ def get_espn_scoreboard(date):
         return None
     return r.json()
 
-def render_espn_banner(scoreboard):
+def render_espn_banner(scoreboard, chosen_date_str):
     if not scoreboard or "events" not in scoreboard:
         st.warning("No games found for this date.")
         return
@@ -30,11 +30,36 @@ def render_espn_banner(scoreboard):
         <style>
         .espn-banner-container {
             display: flex;
+            align-items: flex-start;
             overflow-x: auto;
             white-space: nowrap;
             padding: 10px 0;
             border-bottom: 1px solid #333;
             gap: 16px;
+        }
+        .date-filter {
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1e1e1e;
+            padding: 12px 16px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            min-width: 120px;
+            margin-right: 0;
+        }
+        .date-filter select {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 14px;
+            text-align: center;
+            cursor: pointer;
+        }
+        .date-filter option {
+            background: #333;
+            color: #fff;
         }
         .espn-game-card {
             flex: 0 0 auto;
@@ -98,9 +123,19 @@ def render_espn_banner(scoreboard):
         unsafe_allow_html=True,
     )
     html = '<div class="espn-banner-container">'
+    
+    # Date filter as first "card"
+    current_date_obj = datetime.strptime(chosen_date_str, '%Y%m%d')
+    date_display = current_date_obj.strftime("%b %d")
+    html += f"""
+    <div class="date-filter">
+        <select onchange="this.form.submit()">
+            <option selected>{date_display}</option>
+        </select>
+    </div>
+    """
+    
     events = scoreboard["events"]
-    num_games = len(events)
-    st.success(f"Rendering {num_games} games for {datetime.strptime(chosen_date, '%Y%m%d').strftime('%b %d, %Y')}")  # Optional: Show date for clarity
     for i, game in enumerate(events):
         try:
             comp = game["competitions"][0]
@@ -199,7 +234,7 @@ def fetch_scoreboard_cached(date_str):
 scoreboard = fetch_scoreboard_cached(chosen_date)
 
 # --- Render banner ---
-render_espn_banner(scoreboard)
+render_espn_banner(scoreboard, chosen_date)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
