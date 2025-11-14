@@ -29,24 +29,24 @@ def render_espn_banner(scoreboard):
         """
         <style>
 
-        /* --- Bigger title --- */
+        /* --- Title --- */
         h1, .main-title {
-            font-size: 52px !important;
+            font-size: 50px !important;
             font-weight: 900 !important;
-            margin-bottom: 4px !important;
+            margin-bottom: 6px !important;
         }
 
-        /* --- Banner container smaller --- */
+        /* --- Banner container --- */
         .espn-banner-container {
             display: flex;
             overflow-x: auto;
             white-space: nowrap;
-            padding: 4px 0 !important;
-            gap: 6px !important;   /* very tight spacing */
+            padding: 6px 0 !important;
+            gap: 10px !important;
             border-bottom: 1px solid #333;
         }
 
-        /* --- SUPER COMPACT GAME CARD --- */
+        /* --- COMPACT-MEDIUM CARD --- */
         .espn-game-card {
             flex: 0 0 auto;
             display: flex;
@@ -54,64 +54,69 @@ def render_espn_banner(scoreboard):
             align-items: center;
 
             background: #1e1e1e;
-            border-radius: 6px !important;
+            border-radius: 8px !important;
             border: 1px solid #333;
 
-            padding: 3px 6px !important;     /* ultra small padding */
-            min-width: 120px !important;     /* was 220 → 150 → now 120 */
-            max-width: 120px !important;
+            padding: 8px 12px !important;     /* up from 3px/6px */
+            min-width: 150px !important;      /* up from 120px */
+            max-width: 150px !important;
 
-            gap: 2px !important;
+            gap: 4px !important;
         }
 
+        /* --- Time / status --- */
         .espn-time {
-            font-size: 11px !important;
-            color: #bbb;
+            font-size: 13px !important;       /* up from 11px */
+            color: #ccc;
             text-align: center;
-            margin-bottom: 2px !important;
-            line-height: 1.1;
+            margin-bottom: 4px !important;
+            line-height: 1.15;
         }
 
+        /* --- Matchup row --- */
         .espn-matchup {
             display: flex;
             align-items: center;
             justify-content: space-between;
             width: 100%;
-            margin-bottom: 0px !important;
-            line-height: 1;
+            margin-bottom: 2px !important;
         }
 
-        /* --- Smaller logos --- */
+        /* --- Logos slightly bigger --- */
         .espn-team img {
-            height: 20px !important;
-            width: 20px !important;
-            margin-bottom: 1px !important;
+            height: 26px !important;          /* was 20px */
+            width: 26px !important;
+            margin-bottom: 2px !important;
         }
 
+        /* --- Team column --- */
         .espn-team {
             flex: 1;
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 0px !important;
+            gap: 1px !important;
         }
 
+        /* --- Team abbreviation --- */
         .espn-team-abbr {
-            font-size: 12px !important;
+            font-size: 14px !important;       /* was 12px */
             font-weight: 700 !important;
-            margin-bottom: 0px !important;
+            margin-bottom: 1px !important;
         }
 
+        /* --- Record --- */
         .espn-record {
-            font-size: 9px !important;
+            font-size: 10px !important;       /* slight bump */
             color: #888;
-            line-height: 1;
+            line-height: 1.05;
         }
 
+        /* --- @ symbol --- */
         .espn-at {
-            font-size: 12px !important;
+            font-size: 14px !important;        /* up from 12 */
             font-weight: 700 !important;
-            margin: 0 4px !important;
+            margin: 0 6px !important;
             white-space: nowrap;
         }
 
@@ -119,6 +124,7 @@ def render_espn_banner(scoreboard):
         """,
         unsafe_allow_html=True,
     )
+
 
     html = '<div class="espn-banner-container">'
     
