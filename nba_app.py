@@ -12,6 +12,7 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 from datetime import datetime, timedelta
 import pytz
+from matplotlib.colors import to_rgba as mcolors
 
 def get_espn_scoreboard(date):
     """Fetch ESPN scoreboard data for a given date (YYYYMMDD)."""
@@ -42,21 +43,21 @@ def render_espn_banner(scoreboard):
             flex-direction: column;
             align-items: center;
             background: #1e1e1e;
-            padding: 12px 16px;
+            padding: 8px 12px; /* Reduced padding for smaller cards */
             border-radius: 10px;
             border: 1px solid #333;
-            min-width: 220px;
+            min-width: 180px; /* Reduced min-width */
         }
         .espn-time {
-            font-size: 12px;
+            font-size: 11px; /* Slightly smaller font */
             color: #aaa;
-            margin-bottom: 8px;
+            margin-bottom: 6px; /* Reduced margin */
             text-align: center;
         }
         .espn-time .tv {
-            font-size: 10px;
+            font-size: 9px; /* Slightly smaller TV font */
             color: #ff9900;
-            margin-top: 2px;
+            margin-top: 1px;
         }
         .espn-matchup {
             display: flex;
@@ -72,25 +73,25 @@ def render_espn_banner(scoreboard):
             flex: 1;
         }
         .espn-team img {
-            height: 32px;
-            width: 32px;
-            margin-bottom: 2px;
+            height: 28px; /* Slightly smaller logos */
+            width: 28px;
+            margin-bottom: 1px;
         }
         .espn-team-abbr {
-            font-size: 14px;
+            font-size: 13px; /* Slightly smaller abbr */
             font-weight: bold;
             color: #fff;
-            margin-bottom: 2px;
+            margin-bottom: 1px;
         }
         .espn-record {
-            font-size: 11px;
+            font-size: 10px; /* Slightly smaller record */
             color: #888;
         }
         .espn-at {
-            font-size: 16px;
+            font-size: 14px; /* Slightly smaller @ */
             color: #fff;
             font-weight: bold;
-            margin: 0 8px;
+            margin: 0 6px; /* Reduced margin */
             white-space: nowrap;
         }
         </style>
@@ -170,11 +171,42 @@ def render_espn_banner(scoreboard):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
+# Helper functions for Hot Matchups tab (assuming these are defined elsewhere in the full app; adding placeholders if needed)
+def get_current_season_str():
+    return "2025-26"  # Placeholder; update as needed
+
+def load_team_logs(season):
+    # Placeholder: Load from leaguegamelog or similar
+    lg = leaguegamelog.LeagueGameLog(season=season, season_type_all_star="Regular Season")
+    df = lg.get_data_frames()[0]
+    df["OPP"] = df["Matchup"].str.extract(r'(@|vs)\s*(\w{3})', expand=False)[1]
+    return df
+
+def get_team_color(team_abbr):
+    color_map = {
+        "ATL": "#C8102E", "BKN": "#000000", "BOS": "#007A33", "CHA": "#00788C", "CHI": "#BA0C2F",
+        "CLE": "#860038", "DAL": "#0050B5", "DEN": "#1D428A", "DET": "#C8102E", "GSW": "#1D428A",
+        "HOU": "#BA0C2F", "IND": "#FDB927", "LAC": "#1D428A", "LAL": "#552583", "MEM": "#5D087D",
+        "MIA": "#FDB927", "MIL": "#004714", "MIN": "#005083", "NOP": "#0C2340", "NYK": "#003827",
+        "OKC": "#007AC1", "ORL": "#0077C0", "PHI": "#006BB6", "PHX": "#1D1160", "POR": "#E03A3E",
+        "SAC": "#5A2D81", "SAS": "#C4CED4", "TOR": "#CE1141", "UTA": "#002B5C", "WAS": "#002B5C"
+    }
+    return color_map.get(team_abbr, "#999999")
+
+def soft_bg(hex_color, opacity=0.15):
+    try:
+        rgba = mcolors.to_rgba(hex_color, opacity)
+        return mcolors.to_hex(rgba)
+    except Exception:
+        return "#222222"
+
 # =========================
 # PAGE CONFIG
 # =========================
 st.set_page_config(page_title="NBA Player Prop Tools", page_icon="🏀", layout="wide")
-st.markdown("🏀 NBA Player Prop Tools")
+
+# Bigger title
+st.title("🏀 NBA Player Prop Tools")
 
 # --- Hardcoded to current day ---
 today = datetime.now().date()
@@ -192,6 +224,65 @@ render_espn_banner(scoreboard)
 
 # Divider before your tabs
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
+
+# Tabs (from the full app)
+tab_builder, tab_breakeven, tab_matchups = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "📈 Hot Matchups"])
+
+# Placeholder for Parlay Builder and Breakeven tabs (add your content here)
+with tab_builder:
+    st.subheader("🧮 Parlay Builder")
+    st.info("Parlay builder content goes here.")
+
+with tab_breakeven:
+    st.subheader("🧷 Breakeven")
+    st.info("Breakeven calculator content goes here.")
+
+# Hot Matchups tab
+with tab_matchups:
+    st.subheader("📈 Hot Matchups — Team Defensive Averages (Per Game)")
+    st.caption("Based on NBA team game logs. Sorted from weakest (top) to strongest (bottom) defense.")
+
+    season = get_current_season_str()
+    df = load_team_logs(season)
+    if df.empty:
+        st.warning("No data yet for this season.")
+        st.stop()
+
+    stats = ["PTS", "REB", "AST", "FG3M"]
+    cols = st.columns(len(stats))
+
+    for i, stat in enumerate(stats):
+        allowed = (
+            df.groupby("OPP", as_index=False)[stat]
+            .mean()
+            .rename(columns={stat: f"{stat}_ALLOWED_PER_GAME"})
+        )
+        allowed = allowed.sort_values(f"{stat}_ALLOWED_PER_GAME", ascending=False)
+        with cols[i]:
+            st.markdown(f"### {stat} Allowed / Game")
+            for _, row in allowed.iterrows():
+                team = row["OPP"]
+                val = row[f"{stat}_ALLOWED_PER_GAME"]
+                color = get_team_color(team)
+                bg = soft_bg(color, 0.18)
+                border_color = color + "99"
+                st.markdown(
+                    f"""
+                    <div style='display:flex;align-items:center;justify-content:space-between;
+                                margin-bottom:5px;padding:6px 12px;border-radius:8px;
+                                background-color:{bg};
+                                border:1px solid {border_color};'>
+                        <span style='font-weight:700;color:#FFFFFF;font-size:1rem;
+                                     text-shadow:0 0 6px {color}99;'>{team}</span>
+                        <span style='font-size:0.95rem;color:#FFFFFF;font-weight:600;
+                                     text-shadow:0 0 6px {color}66;'>{val:.1f}</span>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+    st.divider()
+    st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
 
 # =========================
 # THEME / CSS
