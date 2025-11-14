@@ -906,7 +906,7 @@ NBA_CUP_DATES = pd.to_datetime([
     # For 2025-26 season, placeholder empty for now
 ])
 
-games = get_today_games()
+games_today = get_espn_games(date_str)
 
 if games:
     st.markdown(
