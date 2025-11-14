@@ -779,51 +779,6 @@ NBA_CUP_DATES = pd.to_datetime([
     # For 2025-26 season, placeholder empty for now
 ])
 
-games = get_today_games()
-
-if games:
-    st.markdown(
-        """
-        <div style="
-            width:100%;
-            overflow-x:auto;
-            white-space:nowrap;
-            padding:12px 0;
-            border-bottom:1px solid #333;
-            background:rgba(255,255,255,0.03);
-        ">
-        """,
-        unsafe_allow_html=True,
-    )
-
-    banner_html = ""
-
-    for g in games:
-        time_str = g.get("time", "")
-
-        banner_html += f"""
-            <span style="
-                display:inline-flex;
-                align-items:center;
-                gap:8px;
-                margin-right:28px;
-                padding:6px 10px;
-                background:rgba(0,0,0,0.25);
-                border-radius:10px;
-                border:1px solid #444;
-            ">
-                <img src="{g['away_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-weight:700;color:#fff;">{g['away']}</span>
-                <span style="opacity:0.6;">@</span>
-                <span style="font-weight:700;color:#fff;">{g['home']}</span>
-                <img src="{g['home_logo']}" style="width:32px;border-radius:6px;">
-                <span style="font-size:0.8rem;opacity:0.7;">{time_str}</span>
-            </span>
-        """
-
-    st.markdown(banner_html, unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 # =========================
 # TABS
