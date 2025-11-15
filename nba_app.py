@@ -1940,18 +1940,19 @@ with tab_me:
             if logs.empty:
                 st.warning("No league logs yet for this season.")
             else:
-                # safety: make sure helper cols exist
+                # safety: helper cols
                 if "MIN_NUM" not in logs.columns:
                     logs["MIN_NUM"] = logs["MIN"].apply(to_minutes) if "MIN" in logs.columns else 0
                 if "GAME_DATE_DT" not in logs.columns and "GAME_DATE" in logs.columns:
                     logs["GAME_DATE_DT"] = pd.to_datetime(logs["GAME_DATE"], errors="coerce")
 
-                # apply minutes floor
+                # minutes floor
                 logs = logs[logs["MIN_NUM"] >= min_min_me]
 
+                # defense table
                 def_table = get_team_defense_table(season_me)
 
-                # choose defense column based on stat
+                # ---- CHOOSE DEFENSE METRIC ----
                 if stat_me == "PRA":
                     def_table["PRA_allowed"] = (
                         def_table["PTS_allowed"]
@@ -1968,12 +1969,23 @@ with tab_me:
                     }
                     def_col = def_map[stat_me]
 
-                # normalize opponent weakness 0–1 (higher = weaker defense)
+                # ---- OPP WEAKNESS NORMALIZATION ----
                 vals = def_table[def_col]
                 def_table["weak_score"] = (vals - vals.min()) / (vals.max() - vals.min() + 1e-9)
                 def_lookup = def_table.set_index("Team")[["weak_score", def_col]].to_dict(orient="index")
 
                 stat_label = STAT_LABELS.get(stat_me, stat_me)
+
+                # ---- BUILD PACE TABLE (used for scoring environment) ----
+                logs_team = logs.copy()
+                logs_team["PACE_EST"] = (
+                    logs_team["FGA"]
+                    + 0.44 * logs_team["FTA"]
+                    - logs_team["OREB"]
+                    + logs_team["TOV"]
+                )
+                team_pace = logs_team.groupby("TEAM_ABBREVIATION")["PACE_EST"].mean().to_dict()
+                league_pace_avg = np.mean(list(team_pace.values()))
 
                 # 3) Loop games
                 for g in games:
@@ -1984,24 +1996,22 @@ with tab_me:
                     if not home or not away:
                         continue
 
-                    opp_for_home = def_lookup.get(away)
-                    opp_for_away = def_lookup.get(home)
-                    if not opp_for_home or not opp_for_away:
-                        # missing defense numbers for a team
+                    opp_home = def_lookup.get(away)
+                    opp_away = def_lookup.get(home)
+                    if not opp_home or not opp_away:
                         continue
 
                     game_players = []
 
                     # helper to process one side
                     for team_abbr, opp_info, opp_team, side_label in [
-                        (away, opp_for_home, home, "Away"),
-                        (home, opp_for_away, away, "Home"),
+                        (away, opp_home, home, "Away"),
+                        (home, opp_away, away, "Home"),
                     ]:
                         team_logs = logs[logs["TEAM_ABBREVIATION"] == team_abbr].copy()
                         if team_logs.empty:
                             continue
 
-                        # add PRA if needed
                         if stat_me == "PRA":
                             team_logs["PRA"] = (
                                 team_logs["PTS"].fillna(0)
@@ -2010,7 +2020,7 @@ with tab_me:
                             )
                         stat_col = stat_me
 
-                        # last N games per player
+                        # last N
                         team_logs = team_logs.sort_values("GAME_DATE_DT", ascending=False)
                         team_recent = team_logs.groupby("PLAYER_ID").head(last_n_me)
 
@@ -2021,12 +2031,12 @@ with tab_me:
                             avg_min=("MIN_NUM", "mean"),
                         ).reset_index()
 
-                        # sample-size floor
+                        # sample-size filter
                         df_players = df_players[df_players["games_sample"] >= max(3, last_n_me // 2)]
                         if df_players.empty:
                             continue
 
-                        # normalize within team
+                        # normalize recent form
                         rvals = df_players["recent_avg"]
                         if rvals.nunique() > 1:
                             df_players["form_score"] = (rvals - rvals.min()) / (rvals.max() - rvals.min())
@@ -2036,7 +2046,7 @@ with tab_me:
                         df_players["usage_score"] = np.clip(df_players["avg_min"] / 36.0, 0, 1)
                         df_players["opp_weak_score"] = opp_info["weak_score"]
 
-                        # overall heat
+                        # heat
                         df_players["heat_raw"] = (
                             0.5 * df_players["form_score"]
                             + 0.3 * df_players["opp_weak_score"]
@@ -2049,7 +2059,6 @@ with tab_me:
                         df_players["opp_team"] = opp_team
                         df_players["opp_allowed"] = opp_info[def_col]
 
-                        # keep top 3 per side
                         df_players = df_players.sort_values("heat", ascending=False).head(3)
                         game_players.append(df_players)
 
@@ -2059,8 +2068,10 @@ with tab_me:
                     gp = pd.concat(game_players, ignore_index=True)
                     game_heat = int(gp["heat"].max())
 
-                    # badges
+                    # ---- BADGES ----
                     badges = []
+
+                    # matchup strength
                     if game_heat >= 80:
                         badges.append("🔥 Elite matchup")
                     elif game_heat >= 65:
@@ -2068,14 +2079,32 @@ with tab_me:
                     else:
                         badges.append("🤔 Mild edge")
 
+                    # ---- REAL SCORING ENVIRONMENT LOGIC ----
                     if stat_me == "PTS":
-                        badges.append("Scoring environment")
-                    elif stat_me == "PRA":
-                        badges.append("All-around boost")
+                        pace_home = team_pace.get(home, league_pace_avg)
+                        pace_away = team_pace.get(away, league_pace_avg)
+
+                        pace_boost = (
+                            pace_home > league_pace_avg * 1.02
+                            and pace_away > league_pace_avg * 1.02
+                        )
+
+                        avg_pts_allowed = def_table["PTS_allowed"].mean()
+                        high_def_boost = (
+                            opp_home["PTS_allowed"] > avg_pts_allowed
+                            and opp_away["PTS_allowed"] > avg_pts_allowed
+                        )
+
+                        if pace_boost or high_def_boost:
+                            badges.append("🔥 Scoring environment")
+
+                    # PRA environment badge
+                    if stat_me == "PRA":
+                        badges.append("📈 All-around boost")
 
                     badge_html = "".join(f"<span class='badge'>{b}</span>" for b in badges)
 
-                    # edge blurbs per player
+                    # edge blurbs
                     lines = []
                     for _, row in gp.iterrows():
                         lines.append(
@@ -2098,6 +2127,7 @@ with tab_me:
                         """,
                         unsafe_allow_html=True,
                     )
+
 
             
 # =========================
