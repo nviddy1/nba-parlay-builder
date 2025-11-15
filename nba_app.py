@@ -199,6 +199,35 @@ def render_espn_banner(scoreboard):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
+def extract_games_from_scoreboard(scoreboard):
+    """Return list of games with home/away abbreviations + status."""
+    games = []
+    if not scoreboard or "events" not in scoreboard:
+        return games
+
+    for ev in scoreboard["events"]:
+        try:
+            comp = ev["competitions"][0]
+            t_away = comp["competitors"][0]  # away
+            t_home = comp["competitors"][1]  # home
+
+            away_abbr = t_away["team"].get("abbreviation", "")
+            home_abbr = t_home["team"].get("abbreviation", "")
+            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
+
+            games.append(
+                {
+                    "home": home_abbr,
+                    "away": away_abbr,
+                    "status": status,
+                }
+            )
+        except Exception:
+            continue
+
+    return games
+
+
 # =========================
 # PAGE CONFIG
 # =========================
@@ -752,11 +781,22 @@ def get_league_player_logs(season: str) -> pd.DataFrame:
         player_or_team_abbreviation="P",
     ).get_data_frames()[0]
 
+    # numeric stats
     for col in ["PTS", "REB", "AST", "STL", "BLK", "FG3M"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # opponent team abbrev from MATCHUP (same regex you used before)
+    # minutes as integer
+    if "MIN" in df.columns:
+        df["MIN_NUM"] = df["MIN"].apply(to_minutes)
+    else:
+        df["MIN_NUM"] = 0
+
+    # date as datetime
+    if "GAME_DATE" in df.columns:
+        df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
+
+    # opponent team abbrev from MATCHUP
     df["OPP"] = (
         df["MATCHUP"]
         .astype(str)
@@ -765,6 +805,7 @@ def get_league_player_logs(season: str) -> pd.DataFrame:
         .iloc[:, 0]
     )
     return df
+
 
 def compute_matchup_edges(season: str) -> pd.DataFrame:
     """Returns player-level production vs opponent defensive averages."""
@@ -1804,54 +1845,259 @@ with tab_injury:
 # =========================
 # TAB 5: MATCHUP EXPLOITER
 # =========================
-
 with tab_me:
-    st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges - UNDER DEVELOPMENT: VALUES BELOW ARE NOT TRUTHFUL")
-    
-    season = get_current_season_str()
+    st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
 
-    st.caption(f"Find exploitable matchups based on oppotnets tendencies")
+    # --- Small CSS for nice cards ---
+    st.markdown(
+        """
+        <style>
+        .match-card {
+            background:#1c1c1c;
+            padding:16px 18px;
+            border-radius:12px;
+            border:1px solid #333;
+            margin-bottom:14px;
+        }
+        .match-header {
+            font-size:20px;
+            font-weight:800;
+            color:#fff;
+            margin-bottom:4px;
+        }
+        .match-meta {
+            font-size:0.85rem;
+            color:#9ca3af;
+            margin-bottom:8px;
+        }
+        .heat-score {
+            font-size:1rem;
+            font-weight:700;
+            color:#f97316;
+            margin-bottom:6px;
+        }
+        .badge {
+            display:inline-block;
+            padding:3px 8px;
+            background:#111827;
+            border-radius:999px;
+            margin-right:6px;
+            margin-bottom:4px;
+            font-size:0.75rem;
+            color:#e5e7eb;
+            border:1px solid #374151;
+        }
+        .prop-edge {
+            margin-top:10px;
+            font-size:0.9rem;
+            color:#e5e7eb;
+            padding:9px 10px;
+            background:#020617;
+            border-radius:8px;
+            border:1px solid #27272a;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    df = compute_matchup_edges(season)
-    if df.empty:
-        st.warning("No data available yet for this season.")
-        st.stop()
+    # --- Controls ---
+    c1, c2, c3 = st.columns([1.2, 1, 1])
+    with c1:
+        season_me = st.selectbox(
+            "Season for stats",
+            ["2025-26", "2024-25", "2023-24", "2022-23"],
+            index=0,
+        )
+    with c2:
+        stat_me = st.selectbox(
+            "Target stat",
+            ["PTS", "REB", "AST", "PRA", "FG3M"],
+            index=0,
+        )
+    with c3:
+        last_n_me = st.slider("Last N games (form window)", 5, 25, 10)
 
-    st.write("### Filter by Stat")
-    stat_choice = st.selectbox("Stat", ["PTS", "REB", "AST", "FG3M"], index=0)
+    c4, c5 = st.columns([1, 1])
+    with c4:
+        min_min_me = st.slider("Min minutes per game", 10, 40, 24)
+    with c5:
+        game_date = st.date_input("Games for date", value=today)
 
-    edge_col = f"{stat_choice}_edge"
+    run_matchups = st.button("Scan Matchups")
 
-    # Sort by highest positive edge
-    df_sorted = df.sort_values(edge_col, ascending=False)
+    if run_matchups:
+        # 1) Get games for selected date
+        date_str = game_date.strftime("%Y%m%d")
+        sb = fetch_scoreboard_cached(date_str)
+        games = extract_games_from_scoreboard(sb)
 
-    top10 = df_sorted.head(12)
+        if not games:
+            st.warning("No games found for that date.")
+        else:
+            # 2) Load league logs + defense table
+            logs = get_league_player_logs(season_me)
+            if logs.empty:
+                st.warning("No league logs yet for this season.")
+            else:
+                # safety: make sure helper cols exist
+                if "MIN_NUM" not in logs.columns:
+                    logs["MIN_NUM"] = logs["MIN"].apply(to_minutes) if "MIN" in logs.columns else 0
+                if "GAME_DATE_DT" not in logs.columns and "GAME_DATE" in logs.columns:
+                    logs["GAME_DATE_DT"] = pd.to_datetime(logs["GAME_DATE"], errors="coerce")
 
-    for _, row in top10.iterrows():
-        player = row["PLAYER_NAME"]
-        team = row["TEAM_ABBREVIATION"]
-        opp = row["OPP"]
-        edge = row[edge_col]
-        avg_stat = row[stat_choice]
-        opp_allowed = row[f"{stat_choice}_allowed"]
+                # apply minutes floor
+                logs = logs[logs["MIN_NUM"] >= min_min_me]
 
-        st.markdown(f"""
-        <div style="padding:12px;border-radius:10px;margin-bottom:10px;
-            background:#1a1b1f;border:1px solid #333;">
-            <div style="font-size:1.2rem;font-weight:700;margin-bottom:4px;">
-                {player} ({team}) vs {opp}
-            </div>
-            <div style="color:#ccc;">
-                <strong>{stat_choice} Avg:</strong> {avg_stat:.1f} &nbsp;|&nbsp;
-                <strong>Opp Allows:</strong> {opp_allowed:.1f} &nbsp;|&nbsp;
-                <strong>Edge:</strong> <span style="color:{'#00c896' if edge > 0 else '#ff6b6b'};">
-                    {edge:+.2f}
-                </span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+                def_table = get_team_defense_table(season_me)
 
-    st.caption("Higher positive ‘edge’ means player exceeds the opponent’s defensive average.")
+                # choose defense column based on stat
+                if stat_me == "PRA":
+                    def_table["PRA_allowed"] = (
+                        def_table["PTS_allowed"]
+                        + def_table["REB_allowed"]
+                        + def_table["AST_allowed"]
+                    )
+                    def_col = "PRA_allowed"
+                else:
+                    def_map = {
+                        "PTS": "PTS_allowed",
+                        "REB": "REB_allowed",
+                        "AST": "AST_allowed",
+                        "FG3M": "FG3M_allowed",
+                    }
+                    def_col = def_map[stat_me]
+
+                # normalize opponent weakness 0–1 (higher = weaker defense)
+                vals = def_table[def_col]
+                def_table["weak_score"] = (vals - vals.min()) / (vals.max() - vals.min() + 1e-9)
+                def_lookup = def_table.set_index("Team")[["weak_score", def_col]].to_dict(orient="index")
+
+                stat_label = STAT_LABELS.get(stat_me, stat_me)
+
+                # 3) Loop games
+                for g in games:
+                    home = g["home"]
+                    away = g["away"]
+                    status = g.get("status", "")
+
+                    if not home or not away:
+                        continue
+
+                    opp_for_home = def_lookup.get(away)
+                    opp_for_away = def_lookup.get(home)
+                    if not opp_for_home or not opp_for_away:
+                        # missing defense numbers for a team
+                        continue
+
+                    game_players = []
+
+                    # helper to process one side
+                    for team_abbr, opp_info, opp_team, side_label in [
+                        (away, opp_for_home, home, "Away"),
+                        (home, opp_for_away, away, "Home"),
+                    ]:
+                        team_logs = logs[logs["TEAM_ABBREVIATION"] == team_abbr].copy()
+                        if team_logs.empty:
+                            continue
+
+                        # add PRA if needed
+                        if stat_me == "PRA":
+                            team_logs["PRA"] = (
+                                team_logs["PTS"].fillna(0)
+                                + team_logs["REB"].fillna(0)
+                                + team_logs["AST"].fillna(0)
+                            )
+                        stat_col = stat_me
+
+                        # last N games per player
+                        team_logs = team_logs.sort_values("GAME_DATE_DT", ascending=False)
+                        team_recent = team_logs.groupby("PLAYER_ID").head(last_n_me)
+
+                        grp = team_recent.groupby(["PLAYER_ID", "PLAYER_NAME"])
+                        df_players = grp.agg(
+                            recent_avg=(stat_col, "mean"),
+                            games_sample=(stat_col, "count"),
+                            avg_min=("MIN_NUM", "mean"),
+                        ).reset_index()
+
+                        # sample-size floor
+                        df_players = df_players[df_players["games_sample"] >= max(3, last_n_me // 2)]
+                        if df_players.empty:
+                            continue
+
+                        # normalize within team
+                        rvals = df_players["recent_avg"]
+                        if rvals.nunique() > 1:
+                            df_players["form_score"] = (rvals - rvals.min()) / (rvals.max() - rvals.min())
+                        else:
+                            df_players["form_score"] = 0.5
+
+                        df_players["usage_score"] = np.clip(df_players["avg_min"] / 36.0, 0, 1)
+                        df_players["opp_weak_score"] = opp_info["weak_score"]
+
+                        # overall heat
+                        df_players["heat_raw"] = (
+                            0.5 * df_players["form_score"]
+                            + 0.3 * df_players["opp_weak_score"]
+                            + 0.2 * df_players["usage_score"]
+                        )
+                        df_players["heat"] = (df_players["heat_raw"] * 100).round().astype(int)
+
+                        df_players["side"] = side_label
+                        df_players["team"] = team_abbr
+                        df_players["opp_team"] = opp_team
+                        df_players["opp_allowed"] = opp_info[def_col]
+
+                        # keep top 3 per side
+                        df_players = df_players.sort_values("heat", ascending=False).head(3)
+                        game_players.append(df_players)
+
+                    if not game_players:
+                        continue
+
+                    gp = pd.concat(game_players, ignore_index=True)
+                    game_heat = int(gp["heat"].max())
+
+                    # badges
+                    badges = []
+                    if game_heat >= 80:
+                        badges.append("🔥 Elite matchup")
+                    elif game_heat >= 65:
+                        badges.append("👍 Solid matchup")
+                    else:
+                        badges.append("🤔 Mild edge")
+
+                    if stat_me == "PTS":
+                        badges.append("Scoring environment")
+                    elif stat_me == "PRA":
+                        badges.append("All-around boost")
+
+                    badge_html = "".join(f"<span class='badge'>{b}</span>" for b in badges)
+
+                    # edge blurbs per player
+                    lines = []
+                    for _, row in gp.iterrows():
+                        lines.append(
+                            f"{row['PLAYER_NAME']} ({row['side']} {row['team']}) — "
+                            f"recent {row['recent_avg']:.1f} {stat_label} "
+                            f"in {int(row['games_sample'])} g ({row['avg_min']:.1f} min); "
+                            f"{row['opp_team']} allows {row['opp_allowed']:.1f} {stat_label} per game."
+                        )
+                    edges_html = "<br>".join(lines)
+
+                    st.markdown(
+                        f"""
+                        <div class="match-card">
+                          <div class="match-header">{away} @ {home}</div>
+                          <div class="match-meta">{status}</div>
+                          <div class="heat-score">Matchup Heat: {game_heat} / 100</div>
+                          {badge_html}
+                          <div class="prop-edge">{edges_html}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
             
 # =========================
