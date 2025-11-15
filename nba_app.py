@@ -2193,7 +2193,7 @@ with tab_me:
 
 
 # ---------- FADE SECTION ----------
-if edges_fade:
+if edges_fade_raw:
     st.markdown(f"#### 🚫 Tough {stat_label} Spots / Fade Candidates")
 
     html_lines = []
