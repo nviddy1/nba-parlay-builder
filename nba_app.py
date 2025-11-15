@@ -1880,13 +1880,15 @@ with tab_me:
             index=0,
         )
     with c3:
-        last_n_me = st.slider("Last N games (max lookback)", 5, 25, 10)
+        last_n_me = st.slider("Last N games (form window)", 5, 25, 10)
 
-    c4, c5 = st.columns([1, 1])
-    with c4:
-        min_min_me = st.slider("Min minutes per game", 10, 40, 24)
-    with c5:
-        game_date = st.date_input("Games for date", value=today)
+    # NEW: Exclude low-usage players (checkbox instead of min-minute slider)
+    exclude_low_usage = st.checkbox(
+        "Exclude low-usage random players (Season ≥15 MPG or L5 ≥18 MPG)",
+        value=False
+    )
+
+    game_date = st.date_input("Games for date", value=today)
 
     run_matchups = st.button("Scan Matchups")
 
@@ -1904,18 +1906,15 @@ with tab_me:
             if logs.empty:
                 st.warning("No league logs yet for this season.")
             else:
-                # safety: make sure helper cols exist
+                # safety: helper cols
                 if "MIN_NUM" not in logs.columns:
                     logs["MIN_NUM"] = logs["MIN"].apply(to_minutes) if "MIN" in logs.columns else 0
                 if "GAME_DATE_DT" not in logs.columns and "GAME_DATE" in logs.columns:
                     logs["GAME_DATE_DT"] = pd.to_datetime(logs["GAME_DATE"], errors="coerce")
 
-                # apply minutes floor
-                logs = logs[logs["MIN_NUM"] >= min_min_me]
-
                 def_table = get_team_defense_table(season_me).copy()
 
-                # choose defense column based on stat
+                # choose defense metric
                 if stat_me == "PRA":
                     def_table["PRA_allowed"] = (
                         def_table["PTS_allowed"]
@@ -1932,14 +1931,10 @@ with tab_me:
                     }
                     def_col = def_map[stat_me]
 
-                # normalize opponent weakness 0–1 (higher = weaker defense)
+                # normalize & rank defense
                 vals = def_table[def_col]
                 def_table["weak_score"] = (vals - vals.min()) / (vals.max() - vals.min() + 1e-9)
-
-                # rank 1 = MOST allowed (worst defense for overs)
-                def_table["rank_weak"] = def_table[def_col].rank(
-                    ascending=False, method="min"
-                ).astype(int)
+                def_table["rank_weak"] = vals.rank(ascending=False, method="min").astype(int)
                 num_teams = len(def_table)
 
                 def_lookup = def_table.set_index("Team")[
@@ -1951,25 +1946,19 @@ with tab_me:
                 strong_thr = thresholds["strong"]
                 mild_thr = thresholds["mild"]
 
-                max_window = max(10, last_n_me)  # cap lookback for trends
+                max_window = max(10, last_n_me)
 
-                # helper: classify a single player's situation
+                # helper to classify edges
                 def classify_edge(best_diff: float, opp_rank: int) -> str:
-                    """
-                    Returns one of: 'strong_over', 'mild_over', 'fade', 'neutral'
-                    """
-                    # Strong over: big positive trend + very weak defense
                     if best_diff >= strong_thr and opp_rank <= 5:
                         return "strong_over"
-                    # Mild over: decent trend + weak defense OR huge trend alone
                     if (best_diff >= mild_thr and opp_rank <= 10) or best_diff >= strong_thr:
                         return "mild_over"
-                    # Fade: decent negative trend + strong defense
                     if best_diff <= -mild_thr and opp_rank >= (num_teams - 4):
                         return "fade"
                     return "neutral"
 
-                # 3) Loop games
+                # --- Loop games ---
                 for g in games:
                     home = g["home"]
                     away = g["away"]
@@ -1981,17 +1970,13 @@ with tab_me:
                     opp_for_home = def_lookup.get(away)
                     opp_for_away = def_lookup.get(home)
                     if not opp_for_home or not opp_for_away:
-                        # missing defense numbers for a team
                         continue
 
-                    # We’ll collect per-player edges for this game
                     edges_strong = []
                     edges_fade = []
-
-                    # For "heat" classification later
                     edge_types_seen = set()
 
-                    # helper to process one side
+                    # process both teams
                     for team_abbr, opp_info, opp_team, side_label in [
                         (away, opp_for_home, home, "Away"),
                         (home, opp_for_away, away, "Home"),
@@ -2000,7 +1985,6 @@ with tab_me:
                         if team_logs.empty:
                             continue
 
-                        # add PRA if needed
                         if stat_me == "PRA":
                             team_logs["PRA"] = (
                                 team_logs["PTS"].fillna(0)
@@ -2009,7 +1993,6 @@ with tab_me:
                             )
                         stat_col = stat_me
 
-                        # sort by recency and restrict lookback
                         team_logs = team_logs.sort_values(
                             "GAME_DATE_DT", ascending=False
                         )
@@ -2018,74 +2001,67 @@ with tab_me:
                         grp = team_logs.groupby(["PLAYER_ID", "PLAYER_NAME"])
 
                         for (pid, name), sub in grp:
-                            # clean stat series
-                            stat_series = pd.to_numeric(
-                                sub[stat_col], errors="coerce"
-                            ).dropna()
-                            min_series = pd.to_numeric(
-                                sub["MIN_NUM"], errors="coerce"
-                            ).dropna()
+                            stat_series = pd.to_numeric(sub[stat_col], errors="coerce").dropna()
+                            min_series = pd.to_numeric(sub["MIN_NUM"], errors="coerce").dropna()
 
                             games_sample = len(stat_series)
                             if games_sample < 5:
-                                # Not enough data to trust trends
                                 continue
 
+                            # SEASON = whole series
                             season_avg = stat_series.mean()
+                            season_min = min_series.mean() if len(min_series) else 0
 
+                            # L3/L5/L10 averages
                             l3 = stat_series.head(3) if games_sample >= 3 else None
                             l5 = stat_series.head(5) if games_sample >= 5 else None
                             l10 = stat_series.head(10) if games_sample >= 10 else None
 
                             window_avgs = {}
-                            if l3 is not None:
-                                window_avgs["L3"] = l3.mean()
-                            if l5 is not None:
-                                window_avgs["L5"] = l5.mean()
-                            if l10 is not None:
-                                window_avgs["L10"] = l10.mean()
-
+                            if l3 is not None: window_avgs["L3"] = l3.mean()
+                            if l5 is not None: window_avgs["L5"] = l5.mean()
+                            if l10 is not None: window_avgs["L10"] = l10.mean()
                             if not window_avgs:
                                 continue
 
-                            # diffs vs season for each window
-                            diffs = {
-                                w: avg - season_avg for w, avg in window_avgs.items()
-                            }
-
-                            # best positive diff (if all negative, this is least-bad)
-                            best_window, best_diff = max(
-                                diffs.items(), key=lambda x: x[1]
-                            )
-                            best_window_avg = window_avgs[best_window]
-                            window_size = int(best_window[1:])  # 3,5,10
-
-                            # minutes trend: L5 vs season
+                            # Minutes trend (L5 vs season)
+                            min_diff = None
                             if len(min_series) >= 5:
-                                season_min = min_series.mean()
                                 l5_min = min_series.head(5).mean()
                                 min_diff = l5_min - season_min
-                            else:
-                                season_min = min_series.mean() if len(min_series) else 0
-                                min_diff = None
+
+                            # FILTER low-usage players (checkbox)
+                            if exclude_low_usage:
+                                include_allowed = False
+                                if season_min >= 15:
+                                    include_allowed = True
+                                elif min_diff is not None:
+                                    if l5_min >= 18:
+                                        include_allowed = True
+                                if not include_allowed:
+                                    continue
+
+                            # Compute diffs L3/L5/L10 vs season
+                            diffs = {w: avg - season_avg for w, avg in window_avgs.items()}
+                            best_window, best_diff = max(diffs.items(), key=lambda x: x[1])
+                            best_window_avg = window_avgs[best_window]
+                            window_size = int(best_window[1:])  # 3,5,10
 
                             opp_rank = int(opp_info["rank_weak"])
                             opp_val = float(opp_info[def_col])
 
                             edge_type = classify_edge(best_diff, opp_rank)
-
                             if edge_type == "neutral":
-                                continue  # skip clutter, we’ll only show real edges
+                                continue
 
                             edge_types_seen.add(edge_type)
 
-                            # Text for defense ranking
                             weak_ordinal = ordinal(opp_rank)
                             strong_rank = num_teams - opp_rank + 1
                             strong_ordinal = ordinal(strong_rank)
 
+                            # Construct blurbs
                             if edge_type in ("strong_over", "mild_over"):
-                                # Over-style blurb
                                 line = (
                                     f"- **{name} ({side_label} {team_abbr})** — "
                                     f"{best_diff:+.1f} {stat_label} vs season over last {window_size} "
@@ -2095,13 +2071,11 @@ with tab_me:
                                 )
                                 if min_diff is not None and abs(min_diff) >= 1.0:
                                     line += f" Minutes trend: {min_diff:+.1f} min (L5 vs season)."
-
                                 if edge_type == "strong_over":
-                                    line = "🔥 " + line[2:]  # swap bullet for emoji
+                                    line = "🔥 " + line[2:]
                                 edges_strong.append(line)
 
                             elif edge_type == "fade":
-                                # Fade / under-style blurb
                                 line = (
                                     f"- **{name} ({side_label} {team_abbr})** — "
                                     f"{best_diff:+.1f} {stat_label} vs season over last {window_size} "
@@ -2111,11 +2085,10 @@ with tab_me:
                                 )
                                 if min_diff is not None and abs(min_diff) >= 1.0:
                                     line += f" Minutes trend: {min_diff:+.1f} min (L5 vs season)."
-
                                 line = "🚫 " + line[2:]
                                 edges_fade.append(line)
 
-                    # If we didn’t find any actual edges for this game
+                    # Output for this game
                     if not edges_strong and not edges_fade:
                         st.markdown(
                             f"""
@@ -2129,7 +2102,7 @@ with tab_me:
                         )
                         continue
 
-                    # Simple game-level "heat" based on what we saw
+                    # Simple heat
                     if "strong_over" in edge_types_seen:
                         game_heat = 90
                     elif "mild_over" in edge_types_seen:
@@ -2139,7 +2112,7 @@ with tab_me:
                     else:
                         game_heat = 55
 
-                    # Build HTML card header
+                    # Header card
                     st.markdown(
                         f"""
                         <div class="match-card">
@@ -2151,7 +2124,6 @@ with tab_me:
                         unsafe_allow_html=True,
                     )
 
-                    # Now print the lists underneath as normal markdown
                     if edges_strong:
                         st.markdown(f"#### 🔥 Best {stat_label} Overs")
                         st.markdown("\n".join(edges_strong))
@@ -2161,6 +2133,7 @@ with tab_me:
                         st.markdown("\n".join(edges_fade))
 
                     st.markdown("---")
+
 
             
 # =========================
