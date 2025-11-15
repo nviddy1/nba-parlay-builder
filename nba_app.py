@@ -1884,60 +1884,94 @@ with tab_injury:
 with tab_me:
     st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
 
+    # ---------- Helpers & Config ----------
+
     def ordinal(n: int) -> str:
+        """1 -> '1st', 2 -> '2nd', etc."""
         if 10 <= n % 100 <= 20:
-            return f"{n}th"
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
         return f"{n}{suffix}"
 
+    # one place for thresholds
     EDGE_THRESHOLDS = {
-        "PTS": {"strong": 5.0, "mild": 2.5},
-        "REB": {"strong": 2.5, "mild": 1.2},
-        "AST": {"strong": 2.0, "mild": 1.0},
-        "PRA": {"strong": 7.0, "mild": 3.5},
+        "PTS":  {"strong": 5.0, "mild": 2.5},
+        "REB":  {"strong": 2.5, "mild": 1.2},
+        "AST":  {"strong": 2.0, "mild": 1.0},
+        "PRA":  {"strong": 7.0, "mild": 3.5},
         "FG3M": {"strong": 1.2, "mild": 0.5},
     }
 
-    # --- Controls ---
-    c1, c2, c3 = st.columns([1.2, 1, 1])
+    ALL_STATS = ["PTS", "REB", "AST", "PRA", "FG3M"]
+
+    # ---------- Controls ----------
+    c1, c2 = st.columns([1.2, 1])
     with c1:
-        season_me = st.selectbox("Season for stats", ["2025-26", "2024-25", "2023-24", "2022-23"], index=0)
+        season_me = st.selectbox(
+            "Season for stats",
+            ["2025-26", "2024-25", "2023-24", "2022-23"],
+            index=0,
+        )
     with c2:
-        stat_me = st.selectbox("Target stat", ["PTS", "REB", "AST", "PRA", "FG3M"], index=0)
-    with c3:
         last_n_me = st.slider("Last N games (form window)", 5, 25, 10)
 
-    exclude_low_usage = st.checkbox("Exclude low-usage players (Season ≥15 MPG or L5 ≥18 MPG)", value=False)
+    exclude_low_usage = st.checkbox(
+        "Exclude low-usage players (Season ≥15 MPG or L5 ≥18 MPG)",
+        value=False,
+    )
+
     game_date = st.date_input("Games for date", value=today)
     run_matchups = st.button("Scan Matchups")
 
-    if run_matchups:
-        date_str = game_date.strftime("%Y%m%d")
-        sb = fetch_scoreboard_cached(date_str)
-        games = extract_games_from_scoreboard(sb)
+    if not run_matchups:
+        st.stop()
 
-        if not games:
-            st.warning("No games available for selected date.")
-            st.stop()
+    # ---------- Fetch games ----------
+    date_str = game_date.strftime("%Y%m%d")
+    sb = fetch_scoreboard_cached(date_str)
+    games = extract_games_from_scoreboard(sb)
 
-        logs = get_league_player_logs(season_me)
-        if logs.empty:
-            st.warning("No logs for this season.")
-            st.stop()
+    if not games:
+        st.warning("No games available for that date.")
+        st.stop()
 
-        if "MIN_NUM" not in logs.columns:
-            logs["MIN_NUM"] = logs["MIN"].apply(to_minutes)
-        if "GAME_DATE_DT" not in logs.columns:
-            logs["GAME_DATE_DT"] = pd.to_datetime(logs["GAME_DATE"], errors="coerce")
+    # ---------- Player logs ----------
+    logs = get_league_player_logs(season_me)
+    if logs.empty:
+        st.warning("No player logs available for that season.")
+        st.stop()
 
-        # ----- Team defense -----
-        def_table = get_team_defense_table(season_me).copy()
-        if stat_me == "PRA":
-            def_table["PRA_allowed"] = (
-                def_table["PTS_allowed"] +
-                def_table["REB_allowed"] +
-                def_table["AST_allowed"]
-            )
+    if "MIN_NUM" not in logs.columns:
+        logs["MIN_NUM"] = logs["MIN"].apply(to_minutes)
+    if "GAME_DATE_DT" not in logs.columns:
+        logs["GAME_DATE_DT"] = pd.to_datetime(logs["GAME_DATE"], errors="coerce")
+
+    # Add PRA once globally
+    if "PRA" not in logs.columns:
+        logs["PRA"] = (
+            logs["PTS"].fillna(0)
+            + logs["REB"].fillna(0)
+            + logs["AST"].fillna(0)
+        )
+
+    max_window = max(10, last_n_me)
+
+    # ---------- Team defense table ----------
+    def_table = get_team_defense_table(season_me).copy()
+    # PRA allowed
+    def_table["PRA_allowed"] = (
+        def_table["PTS_allowed"]
+        + def_table["REB_allowed"]
+        + def_table["AST_allowed"]
+    )
+
+    num_teams = len(def_table)
+
+    # Build per-stat defense lookups (allowed value + normalized weakness + rank)
+    DEF_INFO = {}
+    for stat in ALL_STATS:
+        if stat == "PRA":
             def_col = "PRA_allowed"
         else:
             def_col = {
@@ -1945,60 +1979,79 @@ with tab_me:
                 "REB": "REB_allowed",
                 "AST": "AST_allowed",
                 "FG3M": "FG3M_allowed",
-            }[stat_me]
+            }[stat]
 
         vals = def_table[def_col]
-        def_table["weak_score"] = (vals - vals.min()) / (vals.max() - vals.min() + 1e-9)
-        def_table["rank_weak"] = vals.rank(ascending=False, method="min").astype(int)
-        num_teams = len(def_table)
+        weak_score = (vals - vals.min()) / (vals.max() - vals.min() + 1e-9)
+        rank_weak = vals.rank(ascending=False, method="min").astype(int)
 
-        def_lookup = def_table.set_index("Team")[["weak_score", def_col, "rank_weak"]].to_dict(orient="index")
+        tmp = def_table[["Team"]].copy()
+        tmp["weak_score"] = weak_score
+        tmp[def_col] = vals
+        tmp["rank_weak"] = rank_weak
 
-        stat_label = STAT_LABELS.get(stat_me, stat_me)
-        strong_thr = EDGE_THRESHOLDS[stat_me]["strong"]
-        mild_thr = EDGE_THRESHOLDS[stat_me]["mild"]
-        max_window = max(10, last_n_me)
+        lookup = tmp.set_index("Team").to_dict(orient="index")
 
-        def classify_edge(best_diff, opp_rank):
-            if best_diff >= strong_thr and opp_rank <= 5:
-                return "strong_over"
-            if best_diff >= mild_thr and opp_rank <= 10:
-                return "mild_over"
-            if best_diff <= -mild_thr and opp_rank >= (num_teams - 4):
-                return "fade"
-            return "neutral"
+        DEF_INFO[stat] = {
+            "def_col": def_col,
+            "lookup": lookup,
+            "strong_thr": EDGE_THRESHOLDS[stat]["strong"],
+            "mild_thr": EDGE_THRESHOLDS[stat]["mild"],
+        }
 
-        # ===== GAME LOOP =====
-        for g in games:
-            home, away = g["home"], g["away"]
-            status = g.get("status", "")
+    # edge classifier (just yes/no by thresholds + rank)
+    def classify_edge(best_diff: float, opp_rank: int, strong_thr: float, mild_thr: float) -> str:
+        # overs
+        if best_diff >= strong_thr and opp_rank <= 5:
+            return "strong_over"
+        if (best_diff >= mild_thr and opp_rank <= 10) or best_diff >= strong_thr:
+            return "mild_over"
+        # fades (unders)
+        if best_diff <= -mild_thr and opp_rank >= (num_teams - 4):
+            return "fade"
+        return "neutral"
 
-            if home not in def_lookup or away not in def_lookup:
-                continue
+    # =====================================================
+    #                    GAME LOOP
+    # =====================================================
+    for g in games:
+        home, away = g["home"], g["away"]
+        status = g.get("status", "")
 
-            opp_for_home = def_lookup[away]
-            opp_for_away = def_lookup[home]
+        # Skip if we don't have defense info for teams
+        if home not in def_table["Team"].values or away not in def_table["Team"].values:
+            continue
 
-            edges_strong_raw = []
-            edges_fade_raw = []
-            edge_types_seen = set()
+        # We'll aggregate edges across *all* stats here
+        all_edges_overs = []
+        all_edges_fades = []
+        edge_types_seen = set()
 
-            # ----- TEAM LOOP -----
-            for team_abbr, opp_info, opp_team, side_label in [
-                (away, opp_for_home, home, "Away"),
-                (home, opp_for_away, away, "Home"),
+        # For each stat type (PTS / REB / AST / PRA / 3PM)
+        for stat_me in ALL_STATS:
+            stat_label = STAT_LABELS.get(stat_me, stat_me)
+            info = DEF_INFO[stat_me]
+            def_col = info["def_col"]
+            def_lookup = info["lookup"]
+            strong_thr = info["strong_thr"]
+            mild_thr = info["mild_thr"]
+
+            # helper: process one side of game
+            for team_abbr, opp_team_abbr, side_label in [
+                (away, home, "Away"),
+                (home, away, "Home"),
             ]:
                 team_logs = logs[logs["TEAM_ABBREVIATION"] == team_abbr]
                 if team_logs.empty:
                     continue
 
-                if stat_me == "PRA":
-                    team_logs["PRA"] = team_logs["PTS"] + team_logs["REB"] + team_logs["AST"]
-
+                # Sort & limit by recent games
                 team_logs = team_logs.sort_values("GAME_DATE_DT", ascending=False)
                 team_logs = team_logs.groupby("PLAYER_ID").head(max_window)
 
-                for (pid, name), sub in team_logs.groupby(["PLAYER_ID", "PLAYER_NAME"]):
+                grp = team_logs.groupby(["PLAYER_ID", "PLAYER_NAME"])
+
+                for (pid, name), sub in grp:
                     stat_series = pd.to_numeric(sub[stat_me], errors="coerce").dropna()
                     min_series = pd.to_numeric(sub["MIN_NUM"], errors="coerce").dropna()
 
@@ -2008,14 +2061,19 @@ with tab_me:
                     season_avg = stat_series.mean()
                     season_min = min_series.mean() if len(min_series) else 0
 
-                    windows = {}
-                    if len(stat_series) >= 3: windows["L3"] = stat_series.head(3).mean()
-                    if len(stat_series) >= 5: windows["L5"] = stat_series.head(5).mean()
-                    if len(stat_series) >= 10: windows["L10"] = stat_series.head(10).mean()
+                    # L3, L5, L10 windows
+                    window_avgs = {}
+                    if len(stat_series) >= 3:
+                        window_avgs["L3"] = stat_series.head(3).mean()
+                    if len(stat_series) >= 5:
+                        window_avgs["L5"] = stat_series.head(5).mean()
+                    if len(stat_series) >= 10:
+                        window_avgs["L10"] = stat_series.head(10).mean()
 
-                    if not windows:
+                    if not window_avgs:
                         continue
 
+                    # minutes trend (L5 vs season)
                     min_diff = None
                     if len(min_series) >= 5:
                         l5_min = min_series.head(5).mean()
@@ -2023,131 +2081,196 @@ with tab_me:
                     else:
                         l5_min = 0
 
+                    # usage filter
                     if exclude_low_usage:
-                        if not (season_min >= 15 or l5_min >= 18):
+                        allowed = (season_min >= 15) or (l5_min >= 18)
+                        if not allowed:
                             continue
 
-                    diffs = {w: avg - season_avg for w, avg in windows.items()}
+                    # best trending window
+                    diffs = {w: avg - season_avg for w, avg in window_avgs.items()}
                     best_window, best_diff = max(diffs.items(), key=lambda x: x[1])
-                    window_size = int(best_window[1:])
+                    best_window_avg = window_avgs[best_window]
+                    window_size = int(best_window[1:])  # 3,5,10
 
-                    opp_rank = opp_info["rank_weak"]
-                    opp_val = opp_info[def_col]
+                    opp_info = def_lookup.get(opp_team_abbr)
+                    if not opp_info:
+                        continue
 
-                    edge_type = classify_edge(best_diff, opp_rank)
+                    opp_rank = int(opp_info["rank_weak"])
+                    opp_val = float(opp_info[def_col])
+                    weak_score = float(opp_info["weak_score"])  # 0–1 (higher = weaker defense)
+
+                    edge_type = classify_edge(best_diff, opp_rank, strong_thr, mild_thr)
                     if edge_type == "neutral":
                         continue
 
                     edge_types_seen.add(edge_type)
 
-                    weak_ordinal = ordinal(opp_rank)
-                    strong_ordinal = ordinal(num_teams - opp_rank + 1)
+                    weak_ord = ordinal(opp_rank)
+                    strong_ord = ordinal(num_teams - opp_rank + 1)
 
+                    # ------- Build blurb -------
                     if edge_type in ("strong_over", "mild_over"):
                         blurb = (
                             f"**{name} ({side_label} {team_abbr})** — "
-                            f"{best_diff:+.1f} {stat_label} over last {window_size} "
-                            f"({windows[best_window]:.1f} vs {season_avg:.1f}); "
-                            f"{opp_team} allows **{opp_val:.1f} {stat_label}** "
-                            f"({weak_ordinal}-highest in NBA)."
+                            f"{best_diff:+.1f} {stat_label} vs season over last {window_size} "
+                            f"({best_window_avg:.1f} vs {season_avg:.1f}); "
+                            f"{opp_team_abbr} allows **{opp_val:.1f} {stat_label}** "
+                            f"({weak_ord}-highest in NBA)."
                         )
                         if min_diff is not None and abs(min_diff) >= 1.0:
                             blurb += f" Minutes trend: {min_diff:+.1f}."
 
-                        edges_strong_raw.append({
+                        # composite edge score (Option B):
+                        form_component = best_diff / strong_thr if strong_thr > 0 else 0
+                        def_component = weak_score           # 0–1, high = weak
+                        edge_score = 0.6 * form_component + 0.4 * def_component
+
+                        all_edges_overs.append({
                             "PLAYER_ID": pid,
                             "PLAYER_NAME": name,
-                            "BLURB": blurb
+                            "TEAM": team_abbr,
+                            "SIDE": side_label,
+                            "STAT": stat_label,
+                            "BEST_DIFF": best_diff,
+                            "EDGE_TYPE": edge_type,
+                            "EDGE_SCORE": edge_score,
+                            "BLURB": blurb,
                         })
 
-                    if edge_type == "fade":
+                    elif edge_type == "fade":
                         blurb = (
                             f"**{name} ({side_label} {team_abbr})** — "
-                            f"{best_diff:+.1f} {stat_label} over last {window_size} "
-                            f"({windows[best_window]:.1f} vs {season_avg:.1f}); "
-                            f"{opp_team} allows **only {opp_val:.1f} {stat_label}** "
-                            f"({strong_ordinal}-lowest in NBA)."
+                            f"{best_diff:+.1f} {stat_label} vs season over last {window_size} "
+                            f"({best_window_avg:.1f} vs {season_avg:.1f}); "
+                            f"{opp_team_abbr} allows **only {opp_val:.1f} {stat_label}** "
+                            f"({strong_ord}-lowest in NBA)."
                         )
                         if min_diff is not None and abs(min_diff) >= 1.0:
                             blurb += f" Minutes trend: {min_diff:+.1f}."
 
-                        edges_fade_raw.append({
+                        # for fades, strong defense = 1 - weak_score
+                        form_component = abs(best_diff) / mild_thr if mild_thr > 0 else 0
+                        def_component = 1.0 - weak_score
+                        edge_score = 0.6 * form_component + 0.4 * def_component
+
+                        all_edges_fades.append({
                             "PLAYER_ID": pid,
                             "PLAYER_NAME": name,
-                            "BLURB": blurb
+                            "TEAM": team_abbr,
+                            "SIDE": side_label,
+                            "STAT": stat_label,
+                            "BEST_DIFF": best_diff,
+                            "EDGE_TYPE": edge_type,
+                            "EDGE_SCORE": edge_score,
+                            "BLURB": blurb,
                         })
 
-            # ----- HEADER -----
-            away_logo = TEAM_LOGOS.get(away)
-            home_logo = TEAM_LOGOS.get(home)
+        # ===========================
+        #   RENDER FOR THIS GAME
+        # ===========================
+        away_logo = TEAM_LOGOS.get(
+            away,
+            "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/default.png",
+        )
+        home_logo = TEAM_LOGOS.get(
+            home,
+            "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/default.png",
+        )
 
-            if "strong_over" in edge_types_seen:
-                game_heat = 90
-            elif "mild_over" in edge_types_seen:
-                game_heat = 78
-            elif "fade" in edge_types_seen:
-                game_heat = 65
-            else:
-                game_heat = 55
+        # derive simple heat from any edges
+        if "strong_over" in edge_types_seen:
+            game_heat = 90
+        elif "mild_over" in edge_types_seen:
+            game_heat = 78
+        elif "fade" in edge_types_seen:
+            game_heat = 65
+        else:
+            game_heat = 55
 
-            header_html = f"""
-            <div style="background:#1e1e1e;padding:12px;border-radius:10px;
-                        border:1px solid #333;box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-bottom:12px;">
-                <div style="display:flex;align-items:center;gap:12px;font-size:18px;
-                            font-weight:600;color:#fff;">
-                    <img src="{away_logo}" width="32" style="border-radius:6px;">
-                    <span>{away}</span>
-                    <span style="opacity:0.7;">@</span>
-                    <span>{home}</span>
-                    <img src="{home_logo}" width="32" style="border-radius:6px;">
-                </div>
-                <div style="margin-top:4px;opacity:0.8;color:#aaa;font-size:12px;">
-                    {status}
-                </div>
-                <div style="margin-top:8px;font-size:16px;font-weight:600;color:#ff6b35;">
-                    Matchup Heat: {game_heat} / 100
-                </div>
+        header_html = f"""
+        <div style="background: #1e1e1e; padding: 12px; border-radius: 10px;
+                    border: 1px solid #333; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                    margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 12px;
+                        font-size: 18px; font-weight: 600; color: #fff;">
+                <img src="{away_logo}" width="32" style="border-radius: 6px;" />
+                <span>{away}</span>
+                <span style="opacity: 0.7; font-size: 16px;">@</span>
+                <span>{home}</span>
+                <img src="{home_logo}" width="32" style="border-radius: 6px;" />
             </div>
-            """
-            st.markdown(header_html, unsafe_allow_html=True)
+            <div style="margin-top: 4px; opacity: 0.8; color: #aaa; font-size: 12px;">
+                {status}
+            </div>
+            <div style="margin-top: 8px; font-size: 16px; font-weight: 600; color: #ff6b35;">
+                Matchup Heat: {game_heat} / 100
+            </div>
+        </div>
+        """
+        st.markdown(header_html, unsafe_allow_html=True)
 
-            # ----- STRONG OVERS -----
-            if edges_strong_raw:
-                st.markdown(f"### 🔥 Best {stat_label} Overs")
-                for item in edges_strong_raw:
-                    pid = item["PLAYER_ID"]
-                    blurb = item["BLURB"]
-                    headshot = get_player_headshot(pid) or \
-                        f"https://a.espncdn.com/i/headshots/nba/players/full/{pid}.png"
-
-                    st.markdown(f"""
-                    <div style="display:flex;gap:10px;margin-bottom:12px;
-                                background:#2a2a2a;padding:10px;border-radius:8px;
-                                border-left:4px solid #ff6b35;">
-                        <img src="{headshot}" width="40" style="border-radius:6px;">
-                        <div style="color:#fff;font-size:14px;">{blurb}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            # ----- FADES -----
-            if edges_fade_raw:
-                st.markdown(f"### 🚫 Tough {stat_label} Spots / Fade Candidates")
-                for item in edges_fade_raw:
-                    pid = item["PLAYER_ID"]
-                    blurb = item["BLURB"]
-                    headshot = get_player_headshot(pid) or \
-                        f"https://a.espncdn.com/i/headshots/nba/players/full/{pid}.png"
-
-                    st.markdown(f"""
-                    <div style="display:flex;gap:10px;margin-bottom:12px;
-                                background:#2a2a2a;padding:10px;border-radius:8px;
-                                border-left:4px solid #666;">
-                        <img src="{headshot}" width="40" style="border-radius:6px;">
-                        <div style="color:#fff;font-size:14px;">{blurb}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
+        if not all_edges_overs and not all_edges_fades:
+            st.markdown(
+                "<div style='color:#e5e7eb; margin-bottom:12px;'>"
+                "No clear edges detected across points, rebounds, assists, PRA, or 3PM. ⚠️"
+                "</div>",
+                unsafe_allow_html=True,
+            )
             st.markdown("---")
+            continue
+
+        # ---- Top 3 Overs (all stats) ----
+        if all_edges_overs:
+            top_overs = sorted(
+                all_edges_overs, key=lambda x: x["EDGE_SCORE"], reverse=True
+            )[:3]
+            st.markdown("### 🔥 Best Overs (All Stats)")
+
+            for item in top_overs:
+                pid = item["PLAYER_ID"]
+                blurb = item["BLURB"]
+                headshot = (
+                    get_player_headshot(pid)
+                    or f"https://a.espncdn.com/i/headshots/nba/players/full/{pid}.png"
+                )
+                line_html = f"""
+                <div style="display:flex; align-items:flex-start; gap:10px;
+                            margin-bottom:12px; background:#2a2a2a; padding:10px;
+                            border-radius:8px; border-left:4px solid #ff6b35;">
+                    <img src="{headshot}" width="40" style="border-radius:6px;" />
+                    <div style="color:#fff; font-size:14px;">{blurb}</div>
+                </div>
+                """
+                st.markdown(line_html, unsafe_allow_html=True)
+
+        # ---- Top 3 Fades (all stats) ----
+        if all_edges_fades:
+            top_fades = sorted(
+                all_edges_fades, key=lambda x: x["EDGE_SCORE"], reverse=True
+            )[:3]
+            st.markdown("### 🚫 Tough Spots / Fade Candidates (All Stats)")
+
+            for item in top_fades:
+                pid = item["PLAYER_ID"]
+                blurb = item["BLURB"]
+                headshot = (
+                    get_player_headshot(pid)
+                    or f"https://a.espncdn.com/i/headshots/nba/players/full/{pid}.png"
+                )
+                line_html = f"""
+                <div style="display:flex; align-items:flex-start; gap:10px;
+                            margin-bottom:12px; background:#2a2a2a; padding:10px;
+                            border-radius:8px; border-left:4px solid #666;">
+                    <img src="{headshot}" width="40" style="border-radius:6px;" />
+                    <div style="color:#fff; font-size:14px;">{blurb}</div>
+                </div>
+                """
+                st.markdown(line_html, unsafe_allow_html=True)
+
+        st.markdown("---")
+
 
 
             
