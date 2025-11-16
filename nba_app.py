@@ -778,6 +778,81 @@ def soft_bg(hex_color, opacity=0.15):
         return mcolors.to_hex(rgba)
     except Exception:
         return "#222222"
+
+# ============================================================
+# PER-POSITION TEAM DEFENSE MODULE
+# ============================================================
+
+import pandas as pd
+
+POSITION_MAP = {
+    # Example fallback if you don't have player data
+    # pid: "PG" / "SG" / "SF" / "PF" / "C"
+    # Fill this dynamically from your player reference table
+}
+
+NORMALIZED_POS = {
+    "PG": "PG", "G": "PG",
+    "SG": "SG",
+    "SF": "SF",
+    "PF": "PF", "F": "PF",
+    "C": "C",
+}
+
+# ---- Pull player positions from your player reference ----
+def get_player_position(pid):
+    if pid in POSITION_MAP:
+        return POSITION_MAP[pid]
+    return "SG"  # fallback
+
+
+# ---- Build per-position defense table ----
+def build_team_positional_defense(season):
+    """
+    Returns dict:
+    team → pos → {PTS_allowed, REB_allowed, AST_allowed, PRA_allowed, FG3M_allowed, ranks}
+    """
+
+    # --- Pull play-by-play style data that includes matchup positions ---
+    # You need a dataset like:
+    # TEAM, OPP_POS, PTS, REB, AST, FG3M
+    # (If you don’t have this, I’ll help you create it from box scores + matchup minutes)
+
+    df = get_positional_defense_data(season)  
+    # Columns must include: Team, Pos, PTS, REB, AST, FG3M
+
+    # Add PRA
+    df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
+
+    # Compute ranks within each position
+    out = {}
+
+    for pos in ["PG", "SG", "SF", "PF", "C"]:
+        sub = df[df["Pos"] == pos]
+        for stat in ["PTS", "REB", "AST", "PRA", "FG3M"]:
+
+            # Rank high → weak defense → allows a lot
+            sub[f"{stat}_rank"] = sub[stat].rank(ascending=False, method="min")
+
+        # Store team → pos → metrics
+        for _, row in sub.iterrows():
+            team = row["Team"]
+            if team not in out:
+                out[team] = {}
+            out[team][pos] = {
+                "PTS_allowed": row["PTS"],
+                "REB_allowed": row["REB"],
+                "AST_allowed": row["AST"],
+                "PRA_allowed": row["PRA"],
+                "FG3M_allowed": row["FG3M"],
+                "PTS_rank": row["PTS_rank"],
+                "REB_rank": row["REB_rank"],
+                "AST_rank": row["AST_rank"],
+                "PRA_rank": row["PRA_rank"],
+                "FG3M_rank": row["FG3M_rank"],
+            }
+
+    return out
     
 # -------------------------
 # Team constants & colors
@@ -2117,7 +2192,8 @@ with tab_me:
                         baseline = (1 - w_recent) * season_avg + w_recent * recent_avg
 
                         # Matchup adjustment based on defensive weakness
-                        d_info = def_context[stat].get(opp_team)
+                        player_pos = get_player_position(pid)
+                        pos_def = team_pos_defense[opp_team][player_pos]
                         if not d_info:
                             continue
 
