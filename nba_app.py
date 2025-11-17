@@ -1296,8 +1296,8 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups = st.tabs(
-    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense"]
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_ml = st.tabs(
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💵 ML & Spread"]
 )
 
 # =========================
@@ -2534,5 +2534,351 @@ with tab_matchups:
 
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
+
+# =========================
+# TAB 7: ML & SPREAD
+# =========================
+with tab_ml:
+    st.subheader("💵 ML & Spread — Model Projected Lines")
+
+    # ---------- Helper functions ----------
+
+    def ordinal(n: int) -> str:
+        if 10 <= n % 100 <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{suffix}"
+
+    def logistic_from_diff(diff: float, scale: float = 6.0) -> float:
+        """
+        Convert point differential into home win probability using a logistic curve.
+        diff > 0 → home favored.
+        """
+        return float(1.0 / (1.0 + np.exp(-diff / scale)))
+
+    def prob_to_american(p: float):
+        """
+        Convert win probability to American odds.
+        Returns an int (e.g., -145, +180) or None if p not in (0,1).
+        """
+        if p <= 0.0 or p >= 1.0:
+            return None
+        if p >= 0.5:
+            # Favorite
+            return -int(round((p / (1.0 - p)) * 100))
+        else:
+            # Underdog
+            return int(round(((1.0 - p) / p) * 100))
+
+    def safe_get(series, key, default):
+        try:
+            val = series.get(key, default)
+        except Exception:
+            val = default
+        return val if pd.notnull(val) else default
+
+    # Optional: injury impact hook
+    def get_team_injury_impact(team_abbr: str, game_ts: pd.Timestamp) -> float:
+        """
+        If you implement get_injury_impact(team,date) elsewhere, this will use it.
+        Otherwise returns 0.
+        """
+        try:
+            return float(get_injury_impact(team_abbr, game_ts))
+        except NameError:
+            return 0.0
+        except Exception:
+            return 0.0
+
+    # ---------- Controls ----------
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        season_sp = st.selectbox(
+            "Season for team strength",
+            ["2025-26", "2024-25", "2023-24", "2022-23"],
+            index=0,
+        )
+    with c2:
+        game_date = st.date_input("Games for date", value=today)
+
+    run_lines = st.button("Project Model Lines")
+
+    if run_lines:
+        target_ts = pd.to_datetime(game_date)
+
+        # 1) Pull today's schedule
+        date_str = game_date.strftime("%Y%m%d")
+        sb = fetch_scoreboard_cached(date_str)
+        games = extract_games_from_scoreboard(sb)
+
+        if not games:
+            st.warning("No games available for that date.")
+            st.stop()
+
+        # 2) Season logs → team offense + last game (for rest)
+        logs_all = get_league_player_logs(season_sp)
+        if logs_all.empty:
+            st.warning("No player logs available for that season.")
+            st.stop()
+
+        # Helper columns
+        if "GAME_DATE_DT" not in logs_all.columns:
+            logs_all["GAME_DATE_DT"] = pd.to_datetime(
+                logs_all["GAME_DATE"], errors="coerce"
+            )
+
+        # Only use games *before* the target date to avoid look-ahead bias
+        logs_before = logs_all[logs_all["GAME_DATE_DT"] < target_ts].copy()
+        if logs_before.empty:
+            # Early season / preseason edge case → fall back to full logs
+            logs_before = logs_all.copy()
+
+        # Compute team total points per game from player logs
+        # Each row is one team in one game
+        team_game_pts = (
+            logs_before.groupby(["TEAM_ABBREVIATION", "GAME_ID"])
+            .agg(team_pts=("PTS", "sum"), game_date=("GAME_DATE_DT", "max"))
+            .reset_index()
+        )
+
+        # Offensive rating proxy: average team points per game
+        team_off_stats = (
+            team_game_pts.groupby("TEAM_ABBREVIATION")["team_pts"]
+            .agg(["mean", "count"])
+            .rename(columns={"mean": "off_ppg", "count": "games"})
+        )
+
+        # Offensive rank (1 = highest scoring offense)
+        team_off_stats["off_rank"] = (
+            team_off_stats["off_ppg"]
+            .rank(ascending=False, method="min")
+            .astype(int)
+        )
+
+        # Last game date → rest days
+        last_game_dates = (
+            team_game_pts.groupby("TEAM_ABBREVIATION")["game_date"]
+            .max()
+        )
+
+        league_off_avg = float(team_off_stats["off_ppg"].mean())
+
+        # 3) Defensive table (overall defense proxy)
+        def_table = get_team_defense_table(season_sp).copy()
+        if "PTS_allowed" not in def_table.columns:
+            st.warning(
+                "Team defense table missing 'PTS_allowed'. "
+                "Cannot build defensive ratings."
+            )
+            st.stop()
+
+        def_table = def_table.set_index("Team")
+        league_def_avg = float(def_table["PTS_allowed"].mean())
+
+        # Defensive rank (1 = stingiest / lowest points allowed)
+        def_table["def_rank"] = (
+            def_table["PTS_allowed"].rank(ascending=True, method="min").astype(int)
+        )
+
+        # Home court advantage baseline (points)
+        HOME_COURT_ADV = 2.5
+        REST_EDGE_PER_DAY = 1.0  # points per net rest day
+
+        # ---------- GAME LOOP ----------
+        for g in games:
+            home = g["home"]
+            away = g["away"]
+            status = g.get("status", "")
+
+            # Skip if we don't have ratings
+            if home not in def_table.index or away not in def_table.index:
+                continue
+
+            # --- Get offense / defense inputs ---
+            home_off_ppg = safe_get(team_off_stats["off_ppg"], home, league_off_avg)
+            away_off_ppg = safe_get(team_off_stats["off_ppg"], away, league_off_avg)
+
+            home_def_ppg = safe_get(def_table["PTS_allowed"], home, league_def_avg)
+            away_def_ppg = safe_get(def_table["PTS_allowed"], away, league_def_avg)
+
+            home_off_rank = safe_get(team_off_stats["off_rank"], home, np.nan)
+            away_off_rank = safe_get(team_off_stats["off_rank"], away, np.nan)
+
+            home_def_rank = safe_get(def_table["def_rank"], home, np.nan)
+            away_def_rank = safe_get(def_table["def_rank"], away, np.nan)
+
+            # Rest days
+            last_home = safe_get(last_game_dates, home, pd.NaT)
+            last_away = safe_get(last_game_dates, away, pd.NaT)
+
+            if pd.isna(last_home):
+                home_rest = 3
+            else:
+                home_rest = max(int((target_ts.date() - last_home.date()).days), 0)
+
+            if pd.isna(last_away):
+                away_rest = 3
+            else:
+                away_rest = max(int((target_ts.date() - last_away.date()).days), 0)
+
+            rest_diff = home_rest - away_rest  # positive → home better rested
+
+            # Injury impact (optional hook)
+            home_inj_impact = get_team_injury_impact(home, target_ts)
+            away_inj_impact = get_team_injury_impact(away, target_ts)
+            # Positive impact means "points lost" for that team
+
+            # --- Baseline expected scoring ---
+            # Simple combined rating:
+            #   Exp home scoring grows if home_off is high or away_def is weak (high PTS_allowed)
+            #   Normalize by league averages to keep numbers reasonable.
+            home_attack_term = home_off_ppg - league_off_avg
+            home_def_term_vs_away = away_def_ppg - league_def_avg
+
+            away_attack_term = away_off_ppg - league_off_avg
+            away_def_term_vs_home = home_def_ppg - league_def_avg
+
+            # Baseline around league average scoring
+            base_total = league_off_avg * 2.0
+
+            home_raw = (
+                league_off_avg
+                + 0.6 * home_attack_term
+                + 0.4 * home_def_term_vs_away
+            )
+            away_raw = (
+                league_off_avg
+                + 0.6 * away_attack_term
+                + 0.4 * away_def_term_vs_home
+            )
+
+            # Normalize totals lightly toward base_total
+            raw_total = home_raw + away_raw
+            total_blend = 0.3 * base_total + 0.7 * raw_total
+
+            # Start from symmetric split of blended total using the raw diff
+            raw_diff = home_raw - away_raw
+            home_exp = (total_blend + raw_diff) / 2.0
+            away_exp = (total_blend - raw_diff) / 2.0
+
+            # Apply home court advantage directly to home side
+            home_exp += HOME_COURT_ADV
+
+            # Rest adjustment: each net rest day worth ~1 point to that side
+            home_exp += 0.5 * REST_EDGE_PER_DAY * rest_diff
+            away_exp -= 0.5 * REST_EDGE_PER_DAY * rest_diff
+
+            # Injury adjustment: subtract points from teams missing talent
+            home_exp -= home_inj_impact
+            away_exp -= away_inj_impact
+
+            # Final differential and total
+            diff = home_exp - away_exp  # positive → home favorite
+            total_points = home_exp + away_exp
+
+            # Win probability & moneylines
+            home_win_prob = logistic_from_diff(diff)
+            away_win_prob = 1.0 - home_win_prob
+
+            home_ml = prob_to_american(home_win_prob)
+            away_ml = prob_to_american(away_win_prob)
+
+            # Model spread from home perspective
+            home_spread = round(diff, 1)  # BOS -4.3, etc.
+
+            # ---------- Render card ----------
+            away_logo = TEAM_LOGOS.get(
+                away,
+                "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/default.png",
+            )
+            home_logo = TEAM_LOGOS.get(
+                home,
+                "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/default.png",
+            )
+
+            # Header card
+            header_html = f"""
+            <div style="background:#1e1e1e; padding:12px; border-radius:10px;
+                        border:1px solid #333; box-shadow:0 2px 8px rgba(0,0,0,0.3);
+                        margin-bottom:10px;">
+                <div style="display:flex; align-items:center; gap:12px;
+                            font-size:18px; font-weight:600; color:#fff;">
+                    <img src="{away_logo}" width="32" style="border-radius:6px;" />
+                    <span>{away}</span>
+                    <span style="opacity:0.7; font-size:16px;">@</span>
+                    <span>{home}</span>
+                    <img src="{home_logo}" width="32" style="border-radius:6px;" />
+                </div>
+                <div style="margin-top:4px; opacity:0.8; color:#aaa; font-size:12px;">
+                    {status}
+                </div>
+            </div>
+            """
+            st.markdown(header_html, unsafe_allow_html=True)
+
+            # Spread / ML line
+            if diff >= 0:
+                fav_team = home
+                dog_team = away
+                fav_spread_str = f"{home} -{abs(home_spread):.1f}"
+            else:
+                fav_team = away
+                dog_team = home
+                fav_spread_str = f"{away} -{abs(home_spread):.1f}"
+
+            line_html = f"""
+            <div style="background:#242424; padding:10px; border-radius:8px;
+                        border:1px solid #444; margin-bottom:8px; color:#fff; font-size:14px;">
+                <div style="font-weight:600; margin-bottom:4px;">Model Line</div>
+                <div>📊 Spread: <b>{fav_spread_str}</b> (home diff {diff:+.1f})</div>
+                <div>📈 Home win probability: <b>{home_win_prob*100:,.1f}%</b>
+                    {f"(ML {home_ml:+d})" if home_ml is not None else ""}</div>
+                <div>📉 Away win probability: <b>{away_win_prob*100:,.1f}%</b>
+                    {f"(ML {away_ml:+d})" if away_ml is not None else ""}</div>
+                <div>🧮 Model total: <b>{total_points:.1f}</b> points</div>
+            </div>
+            """
+            st.markdown(line_html, unsafe_allow_html=True)
+
+            # Context block
+            home_off_txt = (
+                f"{home_off_ppg:.1f} PPG"
+                + (f" ({ordinal(int(home_off_rank))} offense)" if not np.isnan(home_off_rank) else "")
+            )
+            home_def_txt = (
+                f"{home_def_ppg:.1f} PPG allowed"
+                + (f" ({ordinal(int(home_def_rank))} defense)" if not np.isnan(home_def_rank) else "")
+            )
+            away_off_txt = (
+                f"{away_off_ppg:.1f} PPG"
+                + (f" ({ordinal(int(away_off_rank))} offense)" if not np.isnan(away_off_rank) else "")
+            )
+            away_def_txt = (
+                f"{away_def_ppg:.1f} PPG allowed"
+                + (f" ({ordinal(int(away_def_rank))} defense)" if not np.isnan(away_def_rank) else "")
+            )
+
+            context_html = f"""
+            <div style="background:#1b1b1b; padding:10px; border-radius:8px;
+                        border:1px solid #333; margin-bottom:16px; color:#ddd; font-size:13px;">
+                <div style="font-weight:600; margin-bottom:4px;">Context</div>
+                <ul style="padding-left:18px; margin:0;">
+                    <li>{home} offense: {home_off_txt}</li>
+                    <li>{home} defense: {home_def_txt}</li>
+                    <li>{away} offense: {away_off_txt}</li>
+                    <li>{away} defense: {away_def_txt}</li>
+                    <li>Rest: {home} on {home_rest} days rest, {away} on {away_rest} days rest
+                        (net rest edge {rest_diff:+d} days for home).</li>
+                    <li>Home court advantage assumed at ~{HOME_COURT_ADV:.1f} points.</li>
+                    <li>Injury adjustment applied: {home} {home_inj_impact:+.1f} pts, {away} {away_inj_impact:+.1f} pts
+                        (positive = talent missing).</li>
+                </ul>
+            </div>
+            """
+            st.markdown(context_html, unsafe_allow_html=True)
+
+            st.markdown("---")
+
 
 
