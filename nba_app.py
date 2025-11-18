@@ -2541,6 +2541,7 @@ with tab_matchups:
 # =========================
 import textwrap
 import numpy as np
+import pandas as pd
 
 # 2-letter to 3-letter mapping for logos
 ABBREV_MAP = {
@@ -2550,6 +2551,54 @@ ABBREV_MAP = {
     "NY": "NYK",
     # Add more if needed
 }
+
+@st.cache_data(show_spinner=False)
+def load_enhanced_team_logs(season: str) -> pd.DataFrame:
+    """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
+    df = leaguegamelog.LeagueGameLog(
+        season=season,
+        season_type_all_star="Regular Season",
+        player_or_team_abbreviation="T",
+        timeout=60
+    ).get_data_frames()[0]
+    
+    # Ensure numeric columns
+    num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # Extract opponent
+    df["OPP"] = (
+        df["MATCHUP"].astype(str)
+        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1).iloc[:, 0]
+    )
+    
+    # Compute possessions
+    df['poss'] = df['FGA'] + 0.44 * df['FTA'] - df['OREB'] + df['TOV']
+    
+    # Compute opponent stats by grouping per game
+    def get_opp_stats(group):
+        if len(group) != 2:
+            group['opp_pts'] = np.nan
+            group['opp_poss'] = np.nan
+            return group
+        t1, t2 = group.iloc[0], group.iloc[1]
+        t1['opp_pts'] = t2['PTS']
+        t1['opp_poss'] = t2['poss']
+        t2['opp_pts'] = t1['PTS']
+        t2['opp_poss'] = t1['poss']
+        return pd.concat([t1, t2])
+    
+    df = df.groupby('GAME_ID', group_keys=False).apply(get_opp_stats).reset_index(drop=True)
+    
+    # Compute ratings (avoid div by zero)
+    df['ortg'] = np.where(df['poss'] > 0, df['PTS'] / df['poss'] * 100, 0)
+    df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
+    df['nrtg'] = df['ortg'] - df['drtg']
+    
+    return df
 
 with tab_ml:
     # --- Helper for logo + text ---
@@ -2596,43 +2645,29 @@ with tab_ml:
     st.markdown(game_header_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # --- Build Net Strength Model ---
-    st.markdown("### 🧠 Team Strength Model (Simple Net Rating Approximation)")
+    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
     season = get_current_season_str()
-    logs_team = load_team_logs(season)
-    # Offense proxy
-    team_pts = logs_team.groupby("TEAM_ABBREVIATION")["PTS"].mean()
-    # Defense proxy (use allowed per your earlier defense table)
-    td = get_team_defense_table(season).set_index("Team")
-    def simple_strength(team):
-        off = float(team_pts.get(team, 110))
-        def_eff = -float(td.loc[team]["PTS_allowed"]) if team in td.index else -112
-        return off + def_eff
-    strength_home = simple_strength(home)
-    strength_away = simple_strength(away)
-    diff = strength_home - strength_away
-    strength_html = textwrap.dedent(f"""
-        <div style='margin-top:10px;'>
-            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
-                <div style='margin-left:10px;'>
-                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
-                        {team_html(home)} <span style='margin-left:4px; font-weight:600;'>Net Rating: {strength_home:.1f}</span>
-                    </div>
-                </div>
-                <div style='margin-left:10px;'>
-                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
-                        {team_html(away)} <span style='margin-left:4px; font-weight:600;'>Net Rating: {strength_away:.1f}</span>
-                    </div>
-                </div>
-            </div>
-            <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896;'>
-                Net Rating Differential: {diff:+.1f}
-            </div>
-        </div>
-    """).strip()
-    st.markdown(strength_html, unsafe_allow_html=True)
-    # Convert rating diff → spread & win prob
-    est_spread = round(diff / 2.8, 1)
-    win_prob_home = 1 / (1 + np.exp(-diff / 7.5))
+    logs_team = load_enhanced_team_logs(season)
+    if logs_team.empty:
+        st.warning("No data available for this season yet.")
+        st.stop()
+    # Aggregate ratings
+    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_nrtg = team_ortg - team_drtg
+    # Get values
+    ortg_home = float(team_ortg.get(home, 105.0))
+    drtg_home = float(team_drtg.get(home, 105.0))
+    nrtg_home = float(team_nrtg.get(home, 0.0))
+    ortg_away = float(team_ortg.get(away, 105.0))
+    drtg_away = float(team_drtg.get(away, 105.0))
+    nrtg_away = float(team_nrtg.get(away, 0.0))
+    nrtg_diff = nrtg_home - nrtg_away
+    # Home court advantage
+    hca = 2.7
+    est_spread = round(nrtg_diff + hca, 1)
+    # Win probability (logistic on adjusted spread)
+    win_prob_home = 1 / (1 + np.exp(-(est_spread) / 7.5))
     win_prob_away = 1 - win_prob_home
     def prob_to_ml(p):
         if p <= 0 or p >= 1:
@@ -2643,6 +2678,41 @@ with tab_ml:
         return f"-{int(100/(dec-1))}"
     ml_home = prob_to_ml(win_prob_home)
     ml_away = prob_to_ml(win_prob_away)
+    # --- Team Strength HTML ---
+    strength_html = textwrap.dedent(f"""
+        <div style='margin-top:10px;'>
+            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
+                <div style='margin-left:10px;'>
+                    <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home:.1f}</span>
+                    </div>
+                </div>
+                <div style='margin-left:10px;'>
+                    <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away:.1f}</span>
+                    </div>
+                </div>
+            </div>
+            <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>
+                Net Rating Differential: {nrtg_diff:+.1f} | Adjusted Spread (w/ HCA): {est_spread:+.1f}
+            </div>
+        </div>
+    """).strip()
+    st.markdown(strength_html, unsafe_allow_html=True)
     # --- Projected Line Section ---
     st.markdown("### 📊 Game Predictions")
     projected_html = textwrap.dedent(f"""
