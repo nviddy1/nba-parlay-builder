@@ -2716,4 +2716,24 @@ with tab_ml:
                 </div>
                 <div style='margin-left:10px;'>
                     <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
-                    <div style='display:flex;
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away:.1f}</span>
+                    </div>
+                </div>
+            </div>
+            <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>
+                Net Rating Differential: {nrtg_diff:+.1f} | Adjusted Spread (w/ HCA): {est_spread:+.1f}
+            </div>
+        </div>
+    """).strip()
+    st.markdown(strength_html, unsafe_allow_html=True)
+    # --- Projected Line Section ---
+    st.markdown("### 📊 Game Predictions")
+    projected_html = textwrap.dedent(f"""
+        <div style='margin-top:10px; display:
