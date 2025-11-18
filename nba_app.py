@@ -2734,14 +2734,17 @@ def extract_injuries_from_summary(
     abbr_map = {"GS": "GSW"}  # extend if needed
 
     # Impact lookup from advanced stats
+    # Build lookup tables: impact score + games played
     if player_impacts is not None and not player_impacts.empty:
         impact_lookup = (
-            player_impacts
-            .set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"]
-            .to_dict()
+            player_impacts.set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"].to_dict()
+        )
+        impact_lookup_gp = (
+            player_impacts.set_index("PLAYER_NAME_UPPER")["GP"].to_dict()
         )
     else:
         impact_lookup = {}
+        impact_lookup_gp = {}
 
     # NRTG scaling so a full starter-level absence ~1.5 NRTG
     impact_scale_nrtg = 1.5
@@ -2841,6 +2844,25 @@ def extract_injuries_from_summary(
                 status_weight = 0.5
             else:
                 status_weight = 0.75  # default partial weight
+
+            # Games played filter — skip players who have not played this season
+            player_key = player_name.upper()
+            gp = impact_lookup_gp.get(player_key, 0)
+
+            if gp < 3:  # You can use <1 if you want "played at least once"
+                # Record the injury but mark it ignored
+                team_inj.append({
+                    "name": player_name,
+                    "status": fantasy_status,
+                    "injury": full_injury,
+                    "return_date": return_date,
+                    "impact_score": 0,
+                    "status_weight": status_weight,
+                    "ignored": True,
+                    "reason": f"GP={gp}, excluded from adjustment"
+                })
+                continue   # CRITICAL — do NOT count toward totals
+
 
             player_importance = get_player_impact(player_name_upper)
 
