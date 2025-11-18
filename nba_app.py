@@ -12,7 +12,6 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 from datetime import datetime, timedelta
 import pytz
-from nba_api.stats.endpoints import PlayerAdvancedStats, PlayerTraditionalStats  # For BPM in injuries
 
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
@@ -1293,223 +1292,6 @@ NBA_CUP_DATES = pd.to_datetime([
     # For 2025-26 season, placeholder empty for now
 ])
 
-# 2-letter to 3-letter mapping for logos and abbrevs
-ABBREV_MAP = {
-    "SA": "SAS",
-    "GS": "GSW",
-    "NO": "NOP",
-    "NY": "NYK",
-    # Add more if needed
-}
-
-@st.cache_data(show_spinner=False)
-def load_enhanced_team_logs(season: str) -> pd.DataFrame:
-    """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
-    try:
-        df = leaguegamelog.LeagueGameLog(
-            season=season,
-            season_type_all_star="Regular Season",
-            player_or_team_abbreviation="T",
-            timeout=60
-        ).get_data_frames()[0]
-    except Exception:
-        return pd.DataFrame()
-  
-    if df.empty:
-        return df
-  
-    # Ensure numeric columns
-    num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
-    for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-  
-    # Extract opponent
-    df["OPP"] = (
-        df["MATCHUP"].astype(str)
-        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
-        .bfill(axis=1).iloc[:, 0]
-    )
-  
-    # Compute possessions
-    df['poss'] = df['FGA'] + 0.44 * df['FTA'] - df['OREB'] + df['TOV']
-  
-    # Compute opponent stats by grouping per game
-    def get_opp_stats(group):
-        if len(group) < 2:
-            group['opp_pts'] = np.nan
-            group['opp_poss'] = np.nan
-            return group
-      
-        # Get unique teams
-        teams = group['TEAM_ABBREVIATION'].unique()
-        if len(teams) != 2:
-            group['opp_pts'] = np.nan
-            group['opp_poss'] = np.nan
-            return group
-      
-        team_a, team_b = teams
-        pts_a = group[group['TEAM_ABBREVIATION'] == team_a]['PTS'].iloc[0]
-        poss_a = group[group['TEAM_ABBREVIATION'] == team_a]['poss'].iloc[0]
-        pts_b = group[group['TEAM_ABBREVIATION'] == team_b]['PTS'].iloc[0]
-        poss_b = group[group['TEAM_ABBREVIATION'] == team_b]['poss'].iloc[0]
-      
-        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_pts'] = pts_b
-        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_poss'] = poss_b
-        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_pts'] = pts_a
-        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_poss'] = poss_a
-      
-        return group
-  
-    df = df.groupby('GAME_ID', group_keys=False).apply(get_opp_stats).reset_index(drop=True)
-  
-    # Compute ratings (avoid div by zero)
-    df['ortg'] = np.where(df['poss'] > 0, df['PTS'] / df['poss'] * 100, 0)
-    df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
-    df['nrtg'] = df['ortg'] - df['drtg']
-  
-    return df
-
-@st.cache_data(show_spinner=False)
-def get_espn_game_summary(event_id: str) -> dict:
-    """Fetch ESPN game summary including injuries."""
-    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return {}
-
-def get_player_bpm_impact(player_name: str, season: str) -> float:
-    """Fetch Net BPM scaled by usage for NRTG impact. Fallback to 0."""
-    try:
-        pid = get_player_id(player_name)
-        if not pid:
-            return 0.0
-        # MPG
-        trad_df = PlayerTraditionalStats(
-            player_id=pid,
-            season=season,
-            season_type_all_star='Regular Season'
-        ).get_data_frames()[0]
-        if trad_df.empty:
-            return 0.0
-        mpg = float(trad_df['MIN'].mean())
-        if pd.isna(mpg) or mpg <= 0:
-            return 0.0
-        # Net BPM (Per48)
-        adv_df = PlayerAdvancedStats(
-            player_id=pid,
-            season=season,
-            season_type_all_star='Regular Season',
-            per_mode='Per48'
-        ).get_data_frames()[0]
-        if adv_df.empty:
-            return 0.0
-        obpm = float(adv_df['OBPM'].mean())
-        dbpm = float(adv_df['DBPM'].mean())
-        if pd.isna(obpm) or pd.isna(dbpm):
-            return 0.0
-        net_bpm = obpm + dbpm
-        # Scale to possessions (MPG / 48 * BPM)
-        impact = net_bpm * (mpg / 48.0)
-        return impact
-    except Exception:
-        return 0.0
-
-def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: datetime.date, season: str) -> tuple:
-    """Extract out players for home and away from summary, with BPM-based adjustment."""
-    inj_home = []
-    inj_away = []
-    adjust_home = 0.0
-    adjust_away = 0.0
-   
-    injuries_top = summary.get('injuries', [])
-   
-    # Map API abbrevs to app abbrevs
-    abbr_map = {'GS': 'GSW'} # Add more as needed
-   
-    for team_inj_item in injuries_top:
-        team_abbr_api = team_inj_item['team']['abbreviation']
-        team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
-        team_inj = []
-        num_out = 0.0 # Will use BPM impacts
-        for inj in team_inj_item.get('injuries', []):
-            athlete = inj['athlete']
-            player_name = athlete['displayName']
-            details = inj.get('details', {})
-            fantasy_status = details.get('fantasyStatus', {}).get('description', '')
-            injury_type = details.get('type', '')
-            detail = details.get('detail', '')
-            full_injury = f"{injury_type} ({detail})" if detail else injury_type
-            return_date_str = details.get('returnDate')
-           
-            return_date = None
-            if return_date_str:
-                try:
-                    return_date = datetime.date.fromisoformat(return_date_str)
-                except ValueError:
-                    pass
-           
-            # Consider out if no return date or after game date
-            is_out = return_date is None or return_date > game_date
-            if is_out:
-                # Get BPM impact (stronger model)
-                impact = get_player_bpm_impact(player_name, season)
-                # Scale by status: OUT=full, GTD/Questionable=0.5
-                status_lower = fantasy_status.lower()
-                scale = 1.0
-                if any(term in status_lower for term in ['day-to-day', 'questionable', 'gtd']):
-                    scale = 0.5
-                num_out += impact * scale
-                team_inj.append({
-                    'name': player_name,
-                    'status': fantasy_status,
-                    'injury': full_injury,
-                    'return_date': return_date
-                })
-       
-        # No fixed impact_per_player; use summed BPM impacts directly
-        if team_abbr == home_abbr:
-            inj_home = team_inj
-            adjust_home = -num_out # Negative for team NRTG
-        elif team_abbr == away_abbr:
-            inj_away = team_inj
-            adjust_away = -num_out
-   
-    return inj_home, inj_away, adjust_home, adjust_away
-
-# Update your existing extract_games_from_scoreboard to include event_id (if not already)
-def extract_games_from_scoreboard(scoreboard):
-    """Return list of games with home/away abbreviations + status + event_id."""
-    games = []
-    if not scoreboard or "events" not in scoreboard:
-        return games
-    for ev in scoreboard["events"]:
-        try:
-            comp = ev["competitions"][0]
-            t_away = comp["competitors"][0] # away
-            t_home = comp["competitors"][1] # home
-            away_abbr = t_away["team"].get("abbreviation", "")
-            home_abbr = t_home["team"].get("abbreviation", "")
-            # Map 2-letter to 3-letter for consistency
-            away_abbr = ABBREV_MAP.get(away_abbr, away_abbr)
-            home_abbr = ABBREV_MAP.get(home_abbr, home_abbr)
-            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
-            games.append(
-                {
-                    "home": home_abbr,
-                    "away": away_abbr,
-                    "status": status,
-                    "event_id": ev["id"]
-                }
-            )
-        except Exception:
-            continue
-    return games
-
 
 # =========================
 # TABS
@@ -2753,19 +2535,246 @@ with tab_matchups:
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
 
+
 # =========================
-# TAB 7: ML & Spread
+# TAB 7: MONEYLINE & SPREAD
 # =========================
+import textwrap
+import numpy as np
+import pandas as pd
+import requests
+import datetime
+from nba_api.stats.static import players
+from nba_api.stats.endpoints import PlayerAdvancedStats, PlayerTraditionalStats
+# 2-letter to 3-letter mapping for logos and abbrevs
+ABBREV_MAP = {
+    "SA": "SAS",
+    "GS": "GSW",
+    "NO": "NOP",
+    "NY": "NYK",
+    # Add more if needed
+}
+@st.cache_data(show_spinner=False)
+def load_enhanced_team_logs(season: str) -> pd.DataFrame:
+    """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
+    try:
+        df = leaguegamelog.LeagueGameLog(
+            season=season,
+            season_type_all_star="Regular Season",
+            player_or_team_abbreviation="T",
+            timeout=60
+        ).get_data_frames()[0]
+    except Exception:
+        return pd.DataFrame()
+   
+    if df.empty:
+        return df
+   
+    # Ensure numeric columns
+    num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+   
+    # Extract opponent
+    df["OPP"] = (
+        df["MATCHUP"].astype(str)
+        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1).iloc[:, 0]
+    )
+   
+    # Compute possessions
+    df['poss'] = df['FGA'] + 0.44 * df['FTA'] - df['OREB'] + df['TOV']
+   
+    # Compute opponent stats by grouping per game
+    def get_opp_stats(group):
+        if len(group) < 2:
+            group['opp_pts'] = np.nan
+            group['opp_poss'] = np.nan
+            return group
+       
+        # Get unique teams
+        teams = group['TEAM_ABBREVIATION'].unique()
+        if len(teams) != 2:
+            group['opp_pts'] = np.nan
+            group['opp_poss'] = np.nan
+            return group
+       
+        team_a, team_b = teams
+        pts_a = group[group['TEAM_ABBREVIATION'] == team_a]['PTS'].iloc[0]
+        poss_a = group[group['TEAM_ABBREVIATION'] == team_a]['poss'].iloc[0]
+        pts_b = group[group['TEAM_ABBREVIATION'] == team_b]['PTS'].iloc[0]
+        poss_b = group[group['TEAM_ABBREVIATION'] == team_b]['poss'].iloc[0]
+       
+        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_pts'] = pts_b
+        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_poss'] = poss_b
+        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_pts'] = pts_a
+        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_poss'] = poss_a
+       
+        return group
+   
+    df = df.groupby('GAME_ID', group_keys=False).apply(get_opp_stats).reset_index(drop=True)
+   
+    # Compute ratings (avoid div by zero)
+    df['ortg'] = np.where(df['poss'] > 0, df['PTS'] / df['poss'] * 100, 0)
+    df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
+    df['nrtg'] = df['ortg'] - df['drtg']
+   
+    return df
+
+@st.cache_data(show_spinner=False)
+def get_espn_game_summary(event_id: str) -> dict:
+    """Fetch ESPN game summary including injuries."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+def get_player_id(full_name: str):
+    if not full_name:
+        return None
+    res = players.find_players_by_full_name(full_name)
+    return res[0]["id"] if res else None
+
+def get_player_bpm_impact(player_name: str, season: str) -> float:
+    """Fetch Net BPM scaled by usage for NRTG impact. Fallback to 0."""
+    try:
+        pid = get_player_id(player_name)
+        if not pid:
+            return 0.0
+        # MPG
+        trad_df = PlayerTraditionalStats(
+            player_id=pid,
+            season=season,
+            season_type_all_star='Regular Season'
+        ).get_data_frames()[0]
+        if trad_df.empty:
+            return 0.0
+        mpg = float(trad_df['MIN'].mean())
+        if pd.isna(mpg) or mpg <= 0:
+            return 0.0
+        # Net BPM (Per48)
+        adv_df = PlayerAdvancedStats(
+            player_id=pid,
+            season=season,
+            season_type_all_star='Regular Season',
+            per_mode='Per48'
+        ).get_data_frames()[0]
+        if adv_df.empty:
+            return 0.0
+        obpm = float(adv_df['OBPM'].mean())
+        dbpm = float(adv_df['DBPM'].mean())
+        if pd.isna(obpm) or pd.isna(dbpm):
+            return 0.0
+        net_bpm = obpm + dbpm
+        # Scale to possessions (MPG / 48 * BPM)
+        impact = net_bpm * (mpg / 48.0)
+        return impact
+    except Exception:
+        return 0.0
+
+def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: datetime.date, season: str) -> tuple:
+    """Extract out players for home and away from summary, with BPM-based adjustment."""
+    inj_home = []
+    inj_away = []
+    adjust_home = 0.0
+    adjust_away = 0.0
+    
+    injuries_top = summary.get('injuries', [])
+    
+    # Map API abbrevs to app abbrevs
+    abbr_map = {'GS': 'GSW'}  # Add more as needed
+    
+    for team_inj_item in injuries_top:
+        team_abbr_api = team_inj_item['team']['abbreviation']
+        team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
+        team_inj = []
+        num_out = 0.0  # Will use BPM impacts
+        for inj in team_inj_item.get('injuries', []):
+            athlete = inj['athlete']
+            player_name = athlete['displayName']
+            details = inj.get('details', {})
+            fantasy_status = details.get('fantasyStatus', {}).get('description', '')
+            injury_type = details.get('type', '')
+            detail = details.get('detail', '')
+            full_injury = f"{injury_type} ({detail})" if detail else injury_type
+            return_date_str = details.get('returnDate')
+            
+            return_date = None
+            if return_date_str:
+                try:
+                    return_date = datetime.date.fromisoformat(return_date_str)
+                except ValueError:
+                    pass
+            
+            # Consider out if no return date or after game date
+            is_out = return_date is None or return_date > game_date
+            if is_out:
+                # Get BPM impact (stronger model)
+                impact = get_player_bpm_impact(player_name, season)
+                # Scale by status: OUT=full, GTD/Questionable=0.5
+                status_lower = fantasy_status.lower()
+                scale = 1.0
+                if any(term in status_lower for term in ['day-to-day', 'questionable', 'gtd']):
+                    scale = 0.5
+                num_out += impact * scale
+                team_inj.append({
+                    'name': player_name,
+                    'status': fantasy_status,
+                    'injury': full_injury,
+                    'return_date': return_date
+                })
+        
+        # No fixed impact_per_player; use summed BPM impacts directly
+        if team_abbr == home_abbr:
+            inj_home = team_inj
+            adjust_home = -num_out  # Negative for team NRTG
+        elif team_abbr == away_abbr:
+            inj_away = team_inj
+            adjust_away = -num_out
+    
+    return inj_home, inj_away, adjust_home, adjust_away
+
+def extract_games_from_scoreboard(scoreboard):
+    """Return list of games with home/away abbreviations + status + event_id."""
+    games = []
+    if not scoreboard or "events" not in scoreboard:
+        return games
+    for ev in scoreboard["events"]:
+        try:
+            comp = ev["competitions"][0]
+            t_away = comp["competitors"][0] # away
+            t_home = comp["competitors"][1] # home
+            away_abbr = t_away["team"].get("abbreviation", "")
+            home_abbr = t_home["team"].get("abbreviation", "")
+            # Map 2-letter to 3-letter for consistency
+            away_abbr = ABBREV_MAP.get(away_abbr, away_abbr)
+            home_abbr = ABBREV_MAP.get(home_abbr, home_abbr)
+            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
+            games.append(
+                {
+                    "home": home_abbr,
+                    "away": away_abbr,
+                    "status": status,
+                    "event_id": ev["id"]
+                }
+            )
+        except Exception:
+            continue
+    return games
+
 with tab_ml:
     # --- Helper for logo + text ---
     def team_html(team):
         team_key = ABBREV_MAP.get(team, team)
         logo = TEAM_LOGOS.get(team_key, "")
         return f'<span style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;"><img src="{logo}" width="20" style="border-radius:3px; vertical-align:middle;" /><span style="vertical-align:middle;">{team}</span></span>'
-    
     st.subheader("📉 ML & Spread Analyzer")
     st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
-    
     # --- Filters Row (SIDE-BY-SIDE) ---
     fc1, fc2 = st.columns([1, 1])
     with fc1:
@@ -2786,13 +2795,11 @@ with tab_ml:
             game_options,
             key="ml_matchup"
         )
-    
     # Parse game
     chosen = games_ml[game_options.index(game_choice)]
     home = chosen["home"]
     away = chosen["away"]
     event_id = chosen["event_id"]
-    
     # --- Game Header with Logos ---
     game_header_html = f"""
     <div style='display:flex; align-items:center; gap:10px;
@@ -2804,19 +2811,16 @@ with tab_ml:
     """.strip()
     st.markdown(game_header_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    
     # --- Build Net Strength Model ---
     season = get_current_season_str()
     logs_team = load_enhanced_team_logs(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
         st.stop()
-    
     # Aggregate ratings
     team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
     team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
     team_nrtg = team_ortg - team_drtg
-    
     # Get values
     ortg_home = float(team_ortg.get(home, 105.0))
     drtg_home = float(team_drtg.get(home, 105.0))
@@ -2824,25 +2828,20 @@ with tab_ml:
     ortg_away = float(team_ortg.get(away, 105.0))
     drtg_away = float(team_drtg.get(away, 105.0))
     nrtg_away = float(team_nrtg.get(away, 0.0))
-    
     # Fetch injuries from ESPN
     summary = get_espn_game_summary(event_id)
     inj_home, inj_away, adjust_home, adjust_away = extract_injuries_from_summary(summary, home, away, ml_date, season)
-    
     # Adjusted NRTG
-    nrtg_home_adj = nrtg_home + adjust_home # adjust is negative
+    nrtg_home_adj = nrtg_home + adjust_home  # adjust is negative
     nrtg_away_adj = nrtg_away + adjust_away
     nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
-    
     # Home court advantage
     hca = 2.7
-    est_margin = round(nrtg_diff_adj + hca, 1) # Renamed for clarity: this is projected home margin
-    est_spread_home = round(-est_margin, 1) # Home's spread line: negative if home favored
-    
+    est_margin = round(nrtg_diff_adj + hca, 1)  # Renamed for clarity: this is projected home margin
+    est_spread_home = round(-est_margin, 1)  # Home's spread line: negative if home favored
     # Win probability (logistic on adjusted spread) - use est_margin here
     win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5))
     win_prob_away = 1 - win_prob_home
-    
     def prob_to_ml(p):
         if p <= 0 or p >= 1:
             return "N/A"
@@ -2850,10 +2849,8 @@ with tab_ml:
         if dec >= 2:
             return f"+{int((dec-1)*100)}"
         return f"-{int(100/(dec-1))}"
-    
     ml_home = prob_to_ml(win_prob_home)
     ml_away = prob_to_ml(win_prob_away)
-    
     # --- Projected Line Section (moved up) ---
     st.markdown("### 📊 Game Predictions")
     projected_html = textwrap.dedent(f"""
@@ -2886,7 +2883,6 @@ with tab_ml:
     """).strip()
     st.markdown(projected_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    
     # --- Team Strength Model (now after predictions) ---
     st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
     strength_html = textwrap.dedent(f"""
@@ -2924,7 +2920,6 @@ with tab_ml:
     """).strip()
     st.markdown(strength_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    
     # --- Display Injuries (moved to bottom) ---
     st.markdown("### 🩹 Injury Adjustments")
     col1, col2 = st.columns(2)
@@ -2947,7 +2942,6 @@ with tab_ml:
             st.write("No key injuries.")
         st.write(f"*NRTG Adjustment: {adjust_away:+.1f} (BPM model)*")
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    
     # -----------------------
     # Sportsbook Odds Inputs
     # -----------------------
@@ -2959,7 +2953,6 @@ with tab_ml:
     with col2:
         user_ml_away = st.number_input(f"{away} ML", value=0, step=10)
         user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
-    
     # --- Edge Calculation ---
     def american_to_implied(odds):
         if odds > 0:
@@ -2968,16 +2961,13 @@ with tab_ml:
             return abs(odds) / (abs(odds) + 100)
         else:
             return None
-    
     def edge(model_prob, book_odds):
         book_prob = american_to_implied(book_odds)
         if book_prob is None:
             return None
         return (model_prob - book_prob) * 100
-    
     edge_home_ml = edge(win_prob_home, user_ml_home)
     edge_away_ml = edge(win_prob_away, user_ml_away)
-    
     # --- EV Card Helper ---
     def edge_line(team, model_prob, fair, book, ev):
         ev_str = "—" if ev is None else f"{ev:.2f}%"
@@ -2996,7 +2986,6 @@ with tab_ml:
                 </div>
             </div>
         """).strip()
-    
     # --- EV Output ---
     st.markdown("### 💰 EV Analysis (Moneyline)")
     st.markdown(
@@ -3007,4 +2996,3 @@ with tab_ml:
         edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml),
         unsafe_allow_html=True
     )
-
