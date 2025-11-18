@@ -2535,19 +2535,21 @@ with tab_matchups:
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
 
+
 # =========================
 # TAB 7: MONEYLINE & SPREAD
 # =========================
+import textwrap
 with tab_ml:
     # --- Helper for logo + text ---
     def team_html(team):
         logo = TEAM_LOGOS.get(team, "")
-        return f"""
+        return textwrap.dedent(f"""
             <span style='display:inline-flex; align-items:center; gap:6px;'>
                 <img src="{logo}" width="20" style="border-radius:3px;" />
                 <span>{team}</span>
             </span>
-        """
+        """)
     st.subheader("📉 ML & Spread Analyzer")
     st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
     # --- Filters Row (SIDE-BY-SIDE) ---
@@ -2576,14 +2578,14 @@ with tab_ml:
     away = chosen["away"]
     # --- Game Header with Logos ---
     st.markdown(
-        f"""
-        <div style='display:flex; align-items:center; gap:10px;
-                    font-size:1.6rem; font-weight:700; margin-top:8px;'>
-            {team_html(away)}
-            <span style='opacity:0.7;'>@</span>
-            {team_html(home)}
-        </div>
-        """,
+        textwrap.dedent(f"""
+            <div style='display:flex; align-items:center; gap:10px;
+                        font-size:1.6rem; font-weight:700; margin-top:8px;'>
+                {team_html(away)}
+                <span style='opacity:0.7;'>@</span>
+                {team_html(home)}
+            </div>
+        """),
         unsafe_allow_html=True
     )
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
@@ -2616,25 +2618,28 @@ with tab_ml:
     ml_home = prob_to_ml(win_prob_home)
     ml_away = prob_to_ml(win_prob_away)
     # --- Projected Line Section ---
-    st.markdown(f"""
-    ### 📊 Projected Line & Win Probability
-    <div style='margin-top:10px;'>
-        <div style='margin-bottom:4px; font-weight:600;'>Projected Spread:</div>
-        <div style='margin-left:10px;'>
-            {team_html(home)} {est_spread:+}
-        </div>
-        <div style='margin-top:14px; font-weight:600;'>Model Win Probability:</div>
-        <div style='margin-left:10px;'>
-            {team_html(home)}: {win_prob_home*100:.1f}% <br>
-            {team_html(away)}: {win_prob_away*100:.1f}%
-        </div>
-        <div style='margin-top:14px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
-        <div style='margin-left:10px;'>
-            {team_html(home)}: {ml_home} <br>
-            {team_html(away)}: {ml_away}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("### 📊 Projected Line & Win Probability")
+    st.markdown(
+        textwrap.dedent(f"""
+            <div style='margin-top:10px;'>
+                <div style='margin-bottom:4px; font-weight:600;'>Projected Spread:</div>
+                <div style='margin-left:10px;'>
+                    {team_html(home)} {est_spread:+}
+                </div>
+                <div style='margin-top:14px; font-weight:600;'>Model Win Probability:</div>
+                <div style='margin-left:10px;'>
+                    {team_html(home)}: {win_prob_home*100:.1f}% <br>
+                    {team_html(away)}: {win_prob_away*100:.1f}%
+                </div>
+                <div style='margin-top:14px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
+                <div style='margin-left:10px;'>
+                    {team_html(home)}: {ml_home} <br>
+                    {team_html(away)}: {ml_away}
+                </div>
+            </div>
+        """),
+        unsafe_allow_html=True
+    )
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # -----------------------
     # Sportsbook Odds Inputs
@@ -2667,20 +2672,20 @@ with tab_ml:
     def edge_line(team, model_prob, fair, book, ev):
         ev_str = "—" if ev is None else f"{ev:.2f}%"
         color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
-        return f"""
-        <div style="padding:12px;border:1px solid #333;border-radius:10px;
-                    margin-bottom:12px;background:#1e1e1e;">
-            <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">
-                {team_html(team)}
+        return textwrap.dedent(f"""
+            <div style="padding:12px;border:1px solid #333;border-radius:10px;
+                        margin-bottom:12px;background:#1e1e1e;">
+                <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">
+                    {team_html(team)}
+                </div>
+                <div style="font-size:0.9rem;color:#ddd;">
+                    Model Win Prob: {model_prob*100:.1f}% <br>
+                    Fair Odds: {fair} <br>
+                    Sportsbook Odds: {book} <br>
+                    <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
+                </div>
             </div>
-            <div style="font-size:0.9rem;color:#ddd;">
-                Model Win Prob: {model_prob*100:.1f}% <br>
-                Fair Odds: {fair} <br>
-                Sportsbook Odds: {book} <br>
-                <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
-            </div>
-        </div>
-        """
+        """)
     # --- EV Output ---
     st.markdown("### 💰 EV Analysis (Moneyline)")
     st.markdown(
