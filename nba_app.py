@@ -2542,7 +2542,6 @@ with tab_matchups:
 import textwrap
 import numpy as np
 import pandas as pd
-
 # 2-letter to 3-letter mapping for logos
 ABBREV_MAP = {
     "SA": "SAS",
@@ -2551,7 +2550,6 @@ ABBREV_MAP = {
     "NY": "NYK",
     # Add more if needed
 }
-
 @st.cache_data(show_spinner=False)
 def load_enhanced_team_logs(season: str) -> pd.DataFrame:
     """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
@@ -2564,69 +2562,67 @@ def load_enhanced_team_logs(season: str) -> pd.DataFrame:
         ).get_data_frames()[0]
     except Exception:
         return pd.DataFrame()
-    
+   
     if df.empty:
         return df
-    
+   
     # Ensure numeric columns
     num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
     for col in num_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    
+   
     # Extract opponent
     df["OPP"] = (
         df["MATCHUP"].astype(str)
         .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
         .bfill(axis=1).iloc[:, 0]
     )
-    
+   
     # Compute possessions
     df['poss'] = df['FGA'] + 0.44 * df['FTA'] - df['OREB'] + df['TOV']
-    
+   
     # Compute opponent stats by grouping per game
     def get_opp_stats(group):
         if len(group) < 2:
             group['opp_pts'] = np.nan
             group['opp_poss'] = np.nan
             return group
-        
+       
         # Get unique teams
         teams = group['TEAM_ABBREVIATION'].unique()
         if len(teams) != 2:
             group['opp_pts'] = np.nan
             group['opp_poss'] = np.nan
             return group
-        
+       
         team_a, team_b = teams
         pts_a = group[group['TEAM_ABBREVIATION'] == team_a]['PTS'].iloc[0]
         poss_a = group[group['TEAM_ABBREVIATION'] == team_a]['poss'].iloc[0]
         pts_b = group[group['TEAM_ABBREVIATION'] == team_b]['PTS'].iloc[0]
         poss_b = group[group['TEAM_ABBREVIATION'] == team_b]['poss'].iloc[0]
-        
+       
         group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_pts'] = pts_b
         group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_poss'] = poss_b
         group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_pts'] = pts_a
         group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_poss'] = poss_a
-        
+       
         return group
-    
+   
     df = df.groupby('GAME_ID', group_keys=False).apply(get_opp_stats).reset_index(drop=True)
-    
+   
     # Compute ratings (avoid div by zero)
     df['ortg'] = np.where(df['poss'] > 0, df['PTS'] / df['poss'] * 100, 0)
     df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
     df['nrtg'] = df['ortg'] - df['drtg']
-    
+   
     return df
-
 with tab_ml:
     # --- Helper for logo + text ---
     def team_html(team):
         team_key = ABBREV_MAP.get(team, team)
         logo = TEAM_LOGOS.get(team_key, "")
         return f'<span style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;"><img src="{logo}" width="20" style="border-radius:3px; vertical-align:middle;" /><span style="vertical-align:middle;">{team}</span></span>'
-
     st.subheader("📉 ML & Spread Analyzer")
     st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
     # --- Filters Row (SIDE-BY-SIDE) ---
@@ -2685,9 +2681,10 @@ with tab_ml:
     nrtg_diff = nrtg_home - nrtg_away
     # Home court advantage
     hca = 2.7
-    est_spread = round(nrtg_diff + hca, 1)
-    # Win probability (logistic on adjusted spread)
-    win_prob_home = 1 / (1 + np.exp(-(est_spread) / 7.5))
+    est_margin = round(nrtg_diff + hca, 1)  # Renamed for clarity: this is projected home margin
+    est_spread_home = round(-est_margin, 1)  # Home's spread line: negative if home favored
+    # Win probability (logistic on adjusted spread) - use est_margin here
+    win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5))
     win_prob_away = 1 - win_prob_home
     def prob_to_ml(p):
         if p <= 0 or p >= 1:
@@ -2728,7 +2725,7 @@ with tab_ml:
                 </div>
             </div>
             <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>
-                Net Rating Differential: {nrtg_diff:+.1f} | Adjusted Spread (w/ HCA): {est_spread:+.1f}
+                Net Rating Differential: {nrtg_diff:+.1f} | Projected Margin (w/ HCA): {est_margin:+.1f}
             </div>
         </div>
     """).strip()
@@ -2740,7 +2737,7 @@ with tab_ml:
             <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
                 <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
                 <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread:+}</span>
+                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
                 </div>
             </div>
             <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
@@ -2784,7 +2781,6 @@ with tab_ml:
             return abs(odds) / (abs(odds) + 100)
         else:
             return None
-
     def edge(model_prob, book_odds):
         book_prob = american_to_implied(book_odds)
         if book_prob is None:
