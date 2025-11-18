@@ -2544,7 +2544,7 @@ import numpy as np
 import pandas as pd
 import requests
 import datetime
-# 2-letter to 3-letter mapping for logos
+# 2-letter to 3-letter mapping for logos and abbrevs
 ABBREV_MAP = {
     "SA": "SAS",
     "GS": "GSW",
@@ -2649,7 +2649,7 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
         team_abbr_api = team_inj_item['team']['abbreviation']
         team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
         team_inj = []
-        num_out = 0.0
+        num_out = 0.0  # Float for partial impact
         for inj in team_inj_item.get('injuries', []):
             athlete = inj['athlete']
             player_name = athlete['displayName']
@@ -2667,7 +2667,7 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
                 except ValueError:
                     pass
             
-            # Consider out if no return date or after game date
+            # Consider out if no return date or after game date (strict > for same day GTD available)
             is_out = return_date is None or return_date > game_date
             if is_out:
                 # Partial impact based on status
@@ -2707,6 +2707,9 @@ def extract_games_from_scoreboard(scoreboard):
             t_home = comp["competitors"][1] # home
             away_abbr = t_away["team"].get("abbreviation", "")
             home_abbr = t_home["team"].get("abbreviation", "")
+            # Map 2-letter to 3-letter for consistency
+            away_abbr = ABBREV_MAP.get(away_abbr, away_abbr)
+            home_abbr = ABBREV_MAP.get(home_abbr, home_abbr)
             status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
             games.append(
                 {
