@@ -2553,11 +2553,17 @@ from nba_api.stats.endpoints import leaguegamelog, leaguedashplayerstats
 # 2-letter to 3-letter mapping for logos and abbrevs
 ABBREV_MAP = {
     'GS': 'GSW',
-    'SA': 'SAS',
-    'SAS': 'SAS',
     'NO': 'NOP',
     'UT': 'UTA',
-    'UTA': 'UTA'
+    'UTA': 'UTA',
+    "LAL": "LAL",
+    "LA": "LAL",
+    "L.A.": "LAL",
+    "LOS ANGELES LAKERS": "LAL",
+    "SAS": "SAS",
+    "SA": "SAS",
+    "S.A.": "SAS",
+    "SAN ANTONIO SPURS": "SAS",
 }
 
 
