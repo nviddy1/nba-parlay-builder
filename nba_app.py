@@ -2542,8 +2542,8 @@ with tab_matchups:
 import textwrap
 import numpy as np
 import pandas as pd
+import requests
 import datetime
-from nba_api.stats.endpoints import InjuryReport, PlayerTraditionalStats, PlayerAdvancedStats
 # 2-letter to 3-letter mapping for logos
 ABBREV_MAP = {
     "SA": "SAS",
@@ -2620,63 +2620,95 @@ def load_enhanced_team_logs(season: str) -> pd.DataFrame:
    
     return df
 
-def get_team_id(team_abbr, logs_df):
-    """Get team ID from logs dataframe."""
-    team_row = logs_df[logs_df['TEAM_ABBREVIATION'] == team_abbr]
-    if not team_row.empty:
-        return int(team_row['TEAM_ID'].unique()[0])
-    return None
+@st.cache_data(show_spinner=False)
+def get_espn_game_summary(event_id: str) -> dict:
+    """Fetch ESPN game summary including injuries."""
+    url = f"https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
 
-def get_out_players(inj_df, team_id, game_date):
-    """Get players out for the game based on return date."""
-    mask = (
-        (inj_df['TEAM_ID'] == team_id) &
-        (
-            inj_df['RETURN_TO_COMPETITION_DATE'].isna() |
-            (pd.to_datetime(inj_df['RETURN_TO_COMPETITION_DATE']).dt.date > game_date)
-        )
-    )
-    return inj_df[mask]
-
-def adjust_nrtg(out_df, season):
-    """Calculate NRTG adjustment based on out players' Net BPM impact."""
-    if out_df.empty:
-        return 0.0
-    total_adjust = 0.0
-    for _, row in out_df.iterrows():
-        pid = row['PLAYER_ID']
-        try:
-            # Get MPG
-            trad_df = PlayerTraditionalStats(
-                player_id=pid,
-                season=season,
-                season_type_all_star='Regular Season'
-            ).get_data_frames()[0]
-            if trad_df.empty or len(trad_df) == 0:
-                continue
-            mpg = trad_df['MIN'].mean()
-            if pd.isna(mpg) or mpg <= 0:
-                continue
+def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: datetime.date) -> tuple:
+    """Extract out players for home and away from summary."""
+    inj_home = []
+    inj_away = []
+    adjust_home = 0.0
+    adjust_away = 0.0
+    if 'boxscore' not in summary:
+        return inj_home, inj_away, adjust_home, adjust_away
+    
+    box_teams = summary['boxscore'].get('teams', [])
+    impact_per_player = 1.5  # Simple adjustment per out player (approx NRTG impact)
+    
+    for team_data in box_teams:
+        team = team_data.get('team', {})
+        abbr = team.get('abbreviation', '')
+        injuries = team.get('injuries', [])
+        team_inj = []
+        num_out = 0
+        for inj in injuries:
+            athlete = inj.get('athlete', {})
+            player_name = athlete.get('shortName', athlete.get('displayName', 'Unknown'))
+            status = inj.get('status', 'OUT')
+            injury_type = inj.get('type', {}).get('text', 'Injury')
+            return_date_str = inj.get('returnDate', '')
             
-            # Get BPM (Per48 mode for consistency)
-            adv_df = PlayerAdvancedStats(
-                player_id=pid,
-                season=season,
-                season_type_all_star='Regular Season',
-                per_mode='Per48'
-            ).get_data_frames()[0]
-            if adv_df.empty or len(adv_df) == 0:
-                continue
-            obpm = adv_df['OBPM'].mean()
-            dbpm = adv_df['DBPM'].mean()
-            if pd.isna(obpm) or pd.isna(dbpm):
-                continue
-            net_bpm = obpm + dbpm
-            impact = net_bpm * (mpg / 48.0)
-            total_adjust += impact
+            return_date = None
+            if return_date_str:
+                try:
+                    return_date = datetime.datetime.fromisoformat(return_date_str.replace('Z', '+00:00')).date()
+                except ValueError:
+                    pass
+            
+            # Consider out if no return date or after game date
+            if not return_date or return_date > game_date:
+                if status.upper() in ['OUT', 'DOUBTFUL']:  # Focus on definite outs
+                    num_out += 1
+                team_inj.append({
+                    'name': player_name,
+                    'status': status,
+                    'injury': injury_type,
+                    'return_date': return_date
+                })
+        
+        adjust = -impact_per_player * num_out  # Negative impact on NRTG
+        if abbr == home_abbr:
+            inj_home = team_inj
+            adjust_home = adjust
+        elif abbr == away_abbr:
+            inj_away = team_inj
+            adjust_away = adjust
+    
+    return inj_home, inj_away, adjust_home, adjust_away
+
+def extract_games_from_scoreboard(scoreboard):
+    """Return list of games with home/away abbreviations + status + event_id."""
+    games = []
+    if not scoreboard or "events" not in scoreboard:
+        return games
+    for ev in scoreboard["events"]:
+        try:
+            comp = ev["competitions"][0]
+            t_away = comp["competitors"][0] # away
+            t_home = comp["competitors"][1] # home
+            away_abbr = t_away["team"].get("abbreviation", "")
+            home_abbr = t_home["team"].get("abbreviation", "")
+            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
+            games.append(
+                {
+                    "home": home_abbr,
+                    "away": away_abbr,
+                    "status": status,
+                    "event_id": ev["id"]
+                }
+            )
         except Exception:
             continue
-    return total_adjust
+    return games
 
 with tab_ml:
     # --- Helper for logo + text ---
@@ -2710,6 +2742,7 @@ with tab_ml:
     chosen = games_ml[game_options.index(game_choice)]
     home = chosen["home"]
     away = chosen["away"]
+    event_id = chosen["event_id"]
     # --- Game Header with Logos ---
     game_header_html = f"""
     <div style='display:flex; align-items:center; gap:10px;
@@ -2739,24 +2772,12 @@ with tab_ml:
     ortg_away = float(team_ortg.get(away, 105.0))
     drtg_away = float(team_drtg.get(away, 105.0))
     nrtg_away = float(team_nrtg.get(away, 0.0))
-    # Fetch injuries
-    try:
-        inj_df = InjuryReport(season=season, season_type_all_star='Regular Season').get_data_frames()[0]
-    except Exception:
-        inj_df = pd.DataFrame()
-        st.warning("Could not fetch injury report.")
-    # Get team IDs
-    home_id = get_team_id(home, logs_team)
-    away_id = get_team_id(away, logs_team)
-    # Get out players
-    out_home_df = get_out_players(inj_df, home_id, ml_date) if not inj_df.empty else pd.DataFrame()
-    out_away_df = get_out_players(inj_df, away_id, ml_date) if not inj_df.empty else pd.DataFrame()
-    # Calculate adjustments
-    adjust_home = adjust_nrtg(out_home_df, season)
-    adjust_away = adjust_nrtg(out_away_df, season)
+    # Fetch injuries from ESPN
+    summary = get_espn_game_summary(event_id)
+    inj_home, inj_away, adjust_home, adjust_away = extract_injuries_from_summary(summary, home, away, ml_date)
     # Adjusted NRTG
-    nrtg_home_adj = nrtg_home - adjust_home
-    nrtg_away_adj = nrtg_away - adjust_away
+    nrtg_home_adj = nrtg_home + adjust_home  # adjust is negative
+    nrtg_away_adj = nrtg_away + adjust_away
     nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
     # Home court advantage
     hca = 2.7
@@ -2778,21 +2799,23 @@ with tab_ml:
     st.markdown("### 🩹 Injury Adjustments")
     col1, col2 = st.columns(2)
     with col1:
-        st.write(f"**{home} Out ({len(out_home_df)} players):**")
-        if not out_home_df.empty:
-            for _, row in out_home_df.iterrows():
-                st.write(f"- {row['PLAYER_NAME']} ({row.get('INJURY_STATUS', 'OUT')})")
-            st.write(f"*NRTG Adjustment: {adjust_home:+.1f}*")
+        st.write(f"**{home} Out ({len(inj_home)} players):**")
+        if inj_home:
+            for i in inj_home:
+                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
         else:
             st.write("No key injuries.")
+        st.write(f"*NRTG Adjustment: {adjust_home:+.1f} (simple model)*")
     with col2:
-        st.write(f"**{away} Out ({len(out_away_df)} players):**")
-        if not out_away_df.empty:
-            for _, row in out_away_df.iterrows():
-                st.write(f"- {row['PLAYER_NAME']} ({row.get('INJURY_STATUS', 'OUT')})")
-            st.write(f"*NRTG Adjustment: {adjust_away:+.1f}*")
+        st.write(f"**{away} Out ({len(inj_away)} players):**")
+        if inj_away:
+            for i in inj_away:
+                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
         else:
             st.write("No key injuries.")
+        st.write(f"*NRTG Adjustment: {adjust_away:+.1f} (simple model)*")
     # --- Team Strength HTML ---
     strength_html = textwrap.dedent(f"""
         <div style='margin-top:10px;'>
