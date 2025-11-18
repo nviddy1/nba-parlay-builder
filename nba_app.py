@@ -2755,7 +2755,6 @@ with tab_ml:
     st.markdown(game_header_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # --- Build Net Strength Model ---
-    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
     season = get_current_season_str()
     logs_team = load_enhanced_team_logs(season)
     if logs_team.empty:
@@ -2795,28 +2794,40 @@ with tab_ml:
         return f"-{int(100/(dec-1))}"
     ml_home = prob_to_ml(win_prob_home)
     ml_away = prob_to_ml(win_prob_away)
-    # --- Display Injuries ---
-    st.markdown("### 🩹 Injury Adjustments")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**{home} Out ({len(inj_home)} players):**")
-        if inj_home:
-            for i in inj_home:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
-        else:
-            st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_home:+.1f} (simple model)*")
-    with col2:
-        st.write(f"**{away} Out ({len(inj_away)} players):**")
-        if inj_away:
-            for i in inj_away:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
-        else:
-            st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_away:+.1f} (simple model)*")
-    # --- Team Strength HTML ---
+    # --- Projected Line Section (moved up) ---
+    st.markdown("### 📊 Game Predictions")
+    projected_html = textwrap.dedent(f"""
+        <div style='margin-top:10px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;'>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
+                </div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
+                </div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
+                </div>
+            </div>
+        </div>
+    """).strip()
+    st.markdown(projected_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # --- Team Strength Model (now after predictions) ---
+    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
     strength_html = textwrap.dedent(f"""
         <div style='margin-top:10px;'>
             <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
@@ -2851,37 +2862,28 @@ with tab_ml:
         </div>
     """).strip()
     st.markdown(strength_html, unsafe_allow_html=True)
-    # --- Projected Line Section ---
-    st.markdown("### 📊 Game Predictions")
-    projected_html = textwrap.dedent(f"""
-        <div style='margin-top:10px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;'>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
-                </div>
-            </div>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
-                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
-                </div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
-                </div>
-            </div>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
-                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
-                </div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
-                </div>
-            </div>
-        </div>
-    """).strip()
-    st.markdown(projected_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # --- Display Injuries (moved to bottom) ---
+    st.markdown("### 🩹 Injury Adjustments")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**{home} Out ({len(inj_home)} players):**")
+        if inj_home:
+            for i in inj_home:
+                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
+        else:
+            st.write("No key injuries.")
+        st.write(f"*NRTG Adjustment: {adjust_home:+.1f} (simple model)*")
+    with col2:
+        st.write(f"**{away} Out ({len(inj_away)} players):**")
+        if inj_away:
+            for i in inj_away:
+                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
+        else:
+            st.write("No key injuries.")
+        st.write(f"*NRTG Adjustment: {adjust_away:+.1f} (simple model)*")
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # -----------------------
     # Sportsbook Odds Inputs
