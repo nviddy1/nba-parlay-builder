@@ -2623,7 +2623,7 @@ def load_enhanced_team_logs(season: str) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def get_espn_game_summary(event_id: str) -> dict:
     """Fetch ESPN game summary including injuries."""
-    url = f"https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
     try:
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
@@ -2666,7 +2666,8 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
             
             # Consider out if no return date or after game date
             if not return_date or return_date > game_date:
-                if status.upper() in ['OUT', 'DOUBTFUL']:  # Focus on definite outs
+                questionable_statuses = ['OUT', 'DOUBTFUL', 'GTD']
+                if status.upper() in questionable_statuses:  # Include GTD
                     num_out += 1
                 team_inj.append({
                     'name': player_name,
