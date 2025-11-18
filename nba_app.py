@@ -2555,12 +2555,18 @@ ABBREV_MAP = {
 @st.cache_data(show_spinner=False)
 def load_enhanced_team_logs(season: str) -> pd.DataFrame:
     """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
-    df = leaguegamelog.LeagueGameLog(
-        season=season,
-        season_type_all_star="Regular Season",
-        player_or_team_abbreviation="T",
-        timeout=60
-    ).get_data_frames()[0]
+    try:
+        df = leaguegamelog.LeagueGameLog(
+            season=season,
+            season_type_all_star="Regular Season",
+            player_or_team_abbreviation="T",
+            timeout=60
+        ).get_data_frames()[0]
+    except Exception:
+        return pd.DataFrame()
+    
+    if df.empty:
+        return df
     
     # Ensure numeric columns
     num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
@@ -2649,4 +2655,65 @@ with tab_ml:
     away = chosen["away"]
     # --- Game Header with Logos ---
     game_header_html = f"""
-    <div style='display:flex;
+    <div style='display:flex; align-items:center; gap:10px;
+                font-size:1.6rem; font-weight:700; margin-top:8px;'>
+        {team_html(away)}
+        <span style='opacity:0.7;'>@</span>
+        {team_html(home)}
+    </div>
+    """.strip()
+    st.markdown(game_header_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # --- Build Net Strength Model ---
+    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
+    season = get_current_season_str()
+    logs_team = load_enhanced_team_logs(season)
+    if logs_team.empty:
+        st.warning("No data available for this season yet.")
+        st.stop()
+    # Aggregate ratings
+    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_nrtg = team_ortg - team_drtg
+    # Get values
+    ortg_home = float(team_ortg.get(home, 105.0))
+    drtg_home = float(team_drtg.get(home, 105.0))
+    nrtg_home = float(team_nrtg.get(home, 0.0))
+    ortg_away = float(team_ortg.get(away, 105.0))
+    drtg_away = float(team_drtg.get(away, 105.0))
+    nrtg_away = float(team_nrtg.get(away, 0.0))
+    nrtg_diff = nrtg_home - nrtg_away
+    # Home court advantage
+    hca = 2.7
+    est_spread = round(nrtg_diff + hca, 1)
+    # Win probability (logistic on adjusted spread)
+    win_prob_home = 1 / (1 + np.exp(-(est_spread) / 7.5))
+    win_prob_away = 1 - win_prob_home
+    def prob_to_ml(p):
+        if p <= 0 or p >= 1:
+            return "N/A"
+        dec = 1/p
+        if dec >= 2:
+            return f"+{int((dec-1)*100)}"
+        return f"-{int(100/(dec-1))}"
+    ml_home = prob_to_ml(win_prob_home)
+    ml_away = prob_to_ml(win_prob_away)
+    # --- Team Strength HTML ---
+    strength_html = textwrap.dedent(f"""
+        <div style='margin-top:10px;'>
+            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
+                <div style='margin-left:10px;'>
+                    <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home:.1f}</span>
+                    </div>
+                </div>
+                <div style='margin-left:10px;'>
+                    <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
+                    <div style='display:flex;
