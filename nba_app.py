@@ -1296,8 +1296,8 @@ NBA_CUP_DATES = pd.to_datetime([
 # =========================
 # TABS
 # =========================
-tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups = st.tabs(
-    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense"]
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_ml = st.tabs(
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💵 ML & Spread"]
 )
 
 # =========================
@@ -2534,6 +2534,138 @@ with tab_matchups:
 
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
+
+# =========================
+# TAB 7: MONEYLINE & SPREAD
+# =========================
+with tab_ml:
+    st.subheader("💵 ML & Spread Analyzer")
+    st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
+
+    # --- Choose Date ---
+    ml_date = st.date_input("Game Date", value=today, key="ml_date")
+    date_str = ml_date.strftime("%Y%m%d")
+
+    scoreboard_ml = fetch_scoreboard_cached(date_str)
+    games_ml = extract_games_from_scoreboard(scoreboard_ml)
+
+    if not games_ml:
+        st.warning("No games found for this date.")
+        st.stop()
+
+    st.markdown("### Select a Game")
+
+    # Build dropdown list like “LAL @ BOS”
+    game_options = [f"{g['away']} @ {g['home']}" for g in games_ml]
+    game_choice = st.selectbox("Matchup", game_options)
+
+    # Parse selection
+    chosen = games_ml[game_options.index(game_choice)]
+    home = chosen["home"]
+    away = chosen["away"]
+
+    st.markdown(f"## {away} @ {home}")
+
+    # --- Team Strength Model (simple version) ---
+    st.markdown("### 🧠 Team Strength Model (Simple Net Rating Approximation)")
+
+    # Load team logs (per your Team Defense tab)
+    season = get_current_season_str()
+    logs_team = load_team_logs(season)
+
+    # Basic proxy net rating = (Team PTS - Opp PTS)
+    team_pts = logs_team.groupby("TEAM_ABBREVIATION")["PTS"].mean()
+    opp_pts = logs_team.groupby("TEAM_ABBREVIATION")["PTS"].sum() - team_pts  # not perfect but placeholder
+
+    # Use your existing allowed stats as defense proxy
+    td = get_team_defense_table(season).set_index("Team")
+
+    def simple_strength(team):
+        off = float(team_pts.get(team, 110))
+        def_eff = -float(td.loc[team]["PTS_allowed"]) if team in td.index else -112
+        return off + def_eff
+
+    strength_home = simple_strength(home)
+    strength_away = simple_strength(away)
+    diff = strength_home - strength_away
+
+    # Convert strength diff → spread & win probability
+    est_spread = round(diff / 2.8, 1)  # empirically ~2.8 pts per rating point
+    win_prob_home = 1 / (1 + np.exp(-diff / 7.5))
+    win_prob_away = 1 - win_prob_home
+
+    # Convert to moneyline odds
+    def prob_to_ml(p):
+        if p <= 0 or p >= 1:
+            return "N/A"
+        dec = 1/p
+        if dec >= 2:
+            return f"+{int((dec-1)*100)}"
+        return f"-{int(100/(dec-1))}"
+
+    ml_home = prob_to_ml(win_prob_home)
+    ml_away = prob_to_ml(win_prob_away)
+
+    # Display results
+    st.markdown(f"""
+    ### 📊 Projected Line & Win Probability
+
+    **Projected Spread:**  
+    - **{home} {est_spread:+}**
+
+    **Model Win Probability:**  
+    - {home}: **{win_prob_home*100:.1f}%**  
+    - {away}: **{win_prob_away*100:.1f}%**
+
+    **Model Moneyline (Fair Odds):**  
+    - {home}: **{ml_home}**  
+    - {away}: **{ml_away}**
+    """)
+
+    st.markdown("---")
+
+    # --- User input for sportsbook odds ---
+    st.markdown("### 📑 Compare With Sportsbook Odds")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        user_ml_home = st.number_input(f"{home} ML", value=0, step=10)
+        user_spread_home = st.number_input(f"{home} Spread Odds", value=0, step=10)
+
+    with col2:
+        user_ml_away = st.number_input(f"{away} ML", value=0, step=10)
+        user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
+
+    # Compute edges
+    def edge(model_prob, book_odds):
+        book_prob = american_to_implied(book_odds)
+        if book_prob is None: 
+            return None
+        return (model_prob - book_prob) * 100
+
+    edge_home_ml = edge(win_prob_home, user_ml_home)
+    edge_away_ml = edge(win_prob_away, user_ml_away)
+
+    # Display
+    st.markdown("### 💰 EV Analysis (Moneyline)")
+
+    def edge_line(team, model_prob, fair, book, ev):
+        ev_str = "—" if ev is None else f"{ev:.2f}%"
+        color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
+        return f"""
+        <div style="padding:12px;border:1px solid #333;border-radius:10px;margin-bottom:8px;background:#1e1e1e;">
+            <div style="font-size:1rem;font-weight:700;">{team}</div>
+            <div style="font-size:0.9rem;color:#ddd;margin-top:4px;">
+                Model Win Prob: {model_prob*100:.1f}% <br>
+                Fair Odds: {fair} <br>
+                Sportsbook Odds: {book} <br>
+                <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
+            </div>
+        </div>
+        """
+
+    st.markdown(edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml), unsafe_allow_html=True)
+    st.markdown(edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml), unsafe_allow_html=True)
 
 
 
