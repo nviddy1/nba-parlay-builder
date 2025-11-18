@@ -2610,6 +2610,26 @@ with tab_ml:
     strength_home = simple_strength(home)
     strength_away = simple_strength(away)
     diff = strength_home - strength_away
+    strength_html = textwrap.dedent(f"""
+        <div style='margin-top:10px;'>
+            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
+                <div style='margin-left:10px;'>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        {team_html(home)} <span style='margin-left:4px; font-weight:600;'>Net Rating: {strength_home:.1f}</span>
+                    </div>
+                </div>
+                <div style='margin-left:10px;'>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        {team_html(away)} <span style='margin-left:4px; font-weight:600;'>Net Rating: {strength_away:.1f}</span>
+                    </div>
+                </div>
+            </div>
+            <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896;'>
+                Net Rating Differential: {diff:+.1f}
+            </div>
+        </div>
+    """).strip()
+    st.markdown(strength_html, unsafe_allow_html=True)
     # Convert rating diff → spread & win prob
     est_spread = round(diff / 2.8, 1)
     win_prob_home = 1 / (1 + np.exp(-diff / 7.5))
@@ -2624,28 +2644,30 @@ with tab_ml:
     ml_home = prob_to_ml(win_prob_home)
     ml_away = prob_to_ml(win_prob_away)
     # --- Projected Line Section ---
-    st.markdown("### 📊 Projected Line & Win Probability")
+    st.markdown("### 📊 Game Predictions")
     projected_html = textwrap.dedent(f"""
-        <div style='margin-top:10px;'>
-            <div style='margin-bottom:4px; font-weight:600;'>Projected Spread:</div>
-            <div style='display:flex; align-items:center; margin-left:10px; margin-bottom:8px;'>
-                {team_html(home)} <span style='margin-left:4px; font-weight:600;'>{est_spread:+}</span>
+        <div style='margin-top:10px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;'>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread:+}</span>
+                </div>
             </div>
-            <div style='margin-bottom:4px; font-weight:600;'>Model Win Probability:</div>
-            <div style='margin-left:10px;'>
-                <div style='display:flex; align-items:center; margin-bottom:2px;'>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
                     {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
                 </div>
-                <div style='display:flex; align-items:center;'>
+                <div style='display:flex; align-items:center; justify-content:center;'>
                     {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
                 </div>
             </div>
-            <div style='margin-top:14px; margin-bottom:4px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
-            <div style='margin-left:10px;'>
-                <div style='display:flex; align-items:center; margin-bottom:2px;'>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
                     {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
                 </div>
-                <div style='display:flex; align-items:center;'>
+                <div style='display:flex; align-items:center; justify-content:center;'>
                     {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
                 </div>
             </div>
