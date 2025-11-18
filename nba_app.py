@@ -2556,7 +2556,7 @@ with tab_ml:
     def team_html(team):
         team_key = ABBREV_MAP.get(team, team)
         logo = TEAM_LOGOS.get(team_key, "")
-        return f'<span style="display:inline-flex; align-items:center; gap:6px;"><img src="{logo}" width="20" style="border-radius:3px;" /><span>{team}</span></span>'
+        return f'<span style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;"><img src="{logo}" width="20" style="border-radius:3px; vertical-align:middle;" /><span style="vertical-align:middle;">{team}</span></span>'
 
     st.subheader("📉 ML & Spread Analyzer")
     st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
@@ -2628,18 +2628,26 @@ with tab_ml:
     projected_html = textwrap.dedent(f"""
         <div style='margin-top:10px;'>
             <div style='margin-bottom:4px; font-weight:600;'>Projected Spread:</div>
-            <div style='margin-left:10px;'>
-                {team_html(home)} {est_spread:+}
+            <div style='display:flex; align-items:center; margin-left:10px; margin-bottom:8px;'>
+                {team_html(home)} <span style='margin-left:4px; font-weight:600;'>{est_spread:+}</span>
             </div>
-            <div style='margin-top:14px; font-weight:600;'>Model Win Probability:</div>
+            <div style='margin-bottom:4px; font-weight:600;'>Model Win Probability:</div>
             <div style='margin-left:10px;'>
-                {team_html(home)}: {win_prob_home*100:.1f}% <br>
-                {team_html(away)}: {win_prob_away*100:.1f}%
+                <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
+                </div>
+                <div style='display:flex; align-items:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
+                </div>
             </div>
-            <div style='margin-top:14px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
+            <div style='margin-top:14px; margin-bottom:4px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
             <div style='margin-left:10px;'>
-                {team_html(home)}: {ml_home} <br>
-                {team_html(away)}: {ml_away}
+                <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
+                </div>
+                <div style='display:flex; align-items:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
+                </div>
             </div>
         </div>
     """).strip()
