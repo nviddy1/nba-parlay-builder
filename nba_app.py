@@ -2649,27 +2649,36 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
         abbr = team.get('abbreviation', '')
         injuries = team.get('injuries', [])
         team_inj = []
-        num_out = 0
+        num_out = 0.0  # Float for partial impact
         for inj in injuries:
             details = inj.get('details', {})
             fantasy_status = details.get('fantasyStatus', {}).get('description', '')
             athlete = inj.get('athlete', {})
             player_name = athlete.get('shortName', athlete.get('displayName', 'Unknown'))
-            injury_type = details.get('type', 'Injury')
+            injury_type = details.get('comment', details.get('name', 'Injury'))
             return_date_str = details.get('returnDate', '')
             
             return_date = None
             if return_date_str:
                 try:
-                    return_date = datetime.datetime.fromisoformat(return_date_str).date()
+                    # Handle YYYY-MM-DD or ISO with Z
+                    if 'T' in return_date_str:
+                        return_date = datetime.datetime.fromisoformat(return_date_str.replace('Z', '+00:00')).date()
+                    else:
+                        return_date = datetime.datetime.fromisoformat(return_date_str).date()
                 except ValueError:
                     pass
             
-            # Include if no return date or return date >= game date
-            if return_date is None or return_date >= game_date:
-                # Count impact for questionable or worse
-                if fantasy_status.upper() in ['OUT', 'GTD', 'QUESTIONABLE']:
-                    num_out += 1
+            # Include if projected out: no return or after game date
+            is_out = return_date is None or return_date > game_date
+            if is_out:
+                status_lower = fantasy_status.lower()
+                impact = 0
+                if 'out' in status_lower:
+                    impact = 1.0
+                elif 'day-to-day' in status_lower or 'questionable' in status_lower:
+                    impact = 0.5
+                num_out += impact
                 team_inj.append({
                     'name': player_name,
                     'status': fantasy_status,
