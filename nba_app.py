@@ -2651,27 +2651,28 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
         team_inj = []
         num_out = 0
         for inj in injuries:
+            details = inj.get('details', {})
+            fantasy_status = details.get('fantasyStatus', {}).get('description', '')
             athlete = inj.get('athlete', {})
             player_name = athlete.get('shortName', athlete.get('displayName', 'Unknown'))
-            status = inj.get('status', 'OUT')
-            injury_type = inj.get('type', {}).get('text', 'Injury')
-            return_date_str = inj.get('returnDate', '')
+            injury_type = details.get('type', 'Injury')
+            return_date_str = details.get('returnDate', '')
             
             return_date = None
             if return_date_str:
                 try:
-                    return_date = datetime.datetime.fromisoformat(return_date_str.replace('Z', '+00:00')).date()
+                    return_date = datetime.datetime.fromisoformat(return_date_str).date()
                 except ValueError:
                     pass
             
-            # Consider out if no return date or after game date
-            if not return_date or return_date > game_date:
-                questionable_statuses = ['OUT', 'DOUBTFUL', 'GTD']
-                if status.upper() in questionable_statuses:  # Include GTD
+            # Include if no return date or return date >= game date
+            if return_date is None or return_date >= game_date:
+                # Count impact for questionable or worse
+                if fantasy_status.upper() in ['OUT', 'GTD', 'QUESTIONABLE']:
                     num_out += 1
                 team_inj.append({
                     'name': player_name,
-                    'status': status,
+                    'status': fantasy_status,
                     'injury': injury_type,
                     'return_date': return_date
                 })
