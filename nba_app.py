@@ -2544,12 +2544,8 @@ with tab_ml:
     # --- Helper for logo + text ---
     def team_html(team):
         logo = TEAM_LOGOS.get(team, "")
-        return textwrap.dedent(f"""
-            <span style='display:inline-flex; align-items:center; gap:6px;'>
-                <img src="{logo}" width="20" style="border-radius:3px;" />
-                <span>{team}</span>
-            </span>
-        """)
+        return f'<span style="display:inline-flex; align-items:center; gap:6px;"><img src="{logo}" width="20" style="border-radius:3px;" /><span>{team}</span></span>'
+
     st.subheader("📉 ML & Spread Analyzer")
     st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
     # --- Filters Row (SIDE-BY-SIDE) ---
@@ -2577,17 +2573,15 @@ with tab_ml:
     home = chosen["home"]
     away = chosen["away"]
     # --- Game Header with Logos ---
-    st.markdown(
-        textwrap.dedent(f"""
-            <div style='display:flex; align-items:center; gap:10px;
-                        font-size:1.6rem; font-weight:700; margin-top:8px;'>
-                {team_html(away)}
-                <span style='opacity:0.7;'>@</span>
-                {team_html(home)}
-            </div>
-        """),
-        unsafe_allow_html=True
-    )
+    game_header_html = f"""
+    <div style='display:flex; align-items:center; gap:10px;
+                font-size:1.6rem; font-weight:700; margin-top:8px;'>
+        {team_html(away)}
+        <span style='opacity:0.7;'>@</span>
+        {team_html(home)}
+    </div>
+    """.strip()
+    st.markdown(game_header_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # --- Build Net Strength Model ---
     st.markdown("### 🧠 Team Strength Model (Simple Net Rating Approximation)")
@@ -2619,27 +2613,25 @@ with tab_ml:
     ml_away = prob_to_ml(win_prob_away)
     # --- Projected Line Section ---
     st.markdown("### 📊 Projected Line & Win Probability")
-    st.markdown(
-        textwrap.dedent(f"""
-            <div style='margin-top:10px;'>
-                <div style='margin-bottom:4px; font-weight:600;'>Projected Spread:</div>
-                <div style='margin-left:10px;'>
-                    {team_html(home)} {est_spread:+}
-                </div>
-                <div style='margin-top:14px; font-weight:600;'>Model Win Probability:</div>
-                <div style='margin-left:10px;'>
-                    {team_html(home)}: {win_prob_home*100:.1f}% <br>
-                    {team_html(away)}: {win_prob_away*100:.1f}%
-                </div>
-                <div style='margin-top:14px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
-                <div style='margin-left:10px;'>
-                    {team_html(home)}: {ml_home} <br>
-                    {team_html(away)}: {ml_away}
-                </div>
+    projected_html = textwrap.dedent(f"""
+        <div style='margin-top:10px;'>
+            <div style='margin-bottom:4px; font-weight:600;'>Projected Spread:</div>
+            <div style='margin-left:10px;'>
+                {team_html(home)} {est_spread:+}
             </div>
-        """),
-        unsafe_allow_html=True
-    )
+            <div style='margin-top:14px; font-weight:600;'>Model Win Probability:</div>
+            <div style='margin-left:10px;'>
+                {team_html(home)}: {win_prob_home*100:.1f}% <br>
+                {team_html(away)}: {win_prob_away*100:.1f}%
+            </div>
+            <div style='margin-top:14px; font-weight:600;'>Model Moneyline (Fair Odds):</div>
+            <div style='margin-left:10px;'>
+                {team_html(home)}: {ml_home} <br>
+                {team_html(away)}: {ml_away}
+            </div>
+        </div>
+    """).strip()
+    st.markdown(projected_html, unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # -----------------------
     # Sportsbook Odds Inputs
@@ -2685,7 +2677,7 @@ with tab_ml:
                     <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
                 </div>
             </div>
-        """)
+        """).strip()
     # --- EV Output ---
     st.markdown("### 💰 EV Analysis (Moneyline)")
     st.markdown(
