@@ -2544,6 +2544,8 @@ import numpy as np
 import pandas as pd
 import requests
 import datetime
+from nba_api.stats.static import players
+from nba_api.stats.endpoints import PlayerAdvancedStats, PlayerTraditionalStats
 # 2-letter to 3-letter mapping for logos and abbrevs
 ABBREV_MAP = {
     "SA": "SAS",
@@ -2632,15 +2634,57 @@ def get_espn_game_summary(event_id: str) -> dict:
         pass
     return {}
 
-def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: datetime.date) -> tuple:
-    """Extract out players for home and away from summary."""
+def get_player_id(full_name: str):
+    if not full_name:
+        return None
+    res = players.find_players_by_full_name(full_name)
+    return res[0]["id"] if res else None
+
+def get_player_bpm_impact(player_name: str, season: str) -> float:
+    """Fetch Net BPM scaled by usage for NRTG impact. Fallback to 0."""
+    try:
+        pid = get_player_id(player_name)
+        if not pid:
+            return 0.0
+        # MPG
+        trad_df = PlayerTraditionalStats(
+            player_id=pid,
+            season=season,
+            season_type_all_star='Regular Season'
+        ).get_data_frames()[0]
+        if trad_df.empty:
+            return 0.0
+        mpg = float(trad_df['MIN'].mean())
+        if pd.isna(mpg) or mpg <= 0:
+            return 0.0
+        # Net BPM (Per48)
+        adv_df = PlayerAdvancedStats(
+            player_id=pid,
+            season=season,
+            season_type_all_star='Regular Season',
+            per_mode='Per48'
+        ).get_data_frames()[0]
+        if adv_df.empty:
+            return 0.0
+        obpm = float(adv_df['OBPM'].mean())
+        dbpm = float(adv_df['DBPM'].mean())
+        if pd.isna(obpm) or pd.isna(dbpm):
+            return 0.0
+        net_bpm = obpm + dbpm
+        # Scale to possessions (MPG / 48 * BPM)
+        impact = net_bpm * (mpg / 48.0)
+        return impact
+    except Exception:
+        return 0.0
+
+def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: datetime.date, season: str) -> tuple:
+    """Extract out players for home and away from summary, with BPM-based adjustment."""
     inj_home = []
     inj_away = []
     adjust_home = 0.0
     adjust_away = 0.0
     
     injuries_top = summary.get('injuries', [])
-    impact_per_player = 1.5  # Simple adjustment per out player (approx NRTG impact)
     
     # Map API abbrevs to app abbrevs
     abbr_map = {'GS': 'GSW'}  # Add more as needed
@@ -2649,7 +2693,7 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
         team_abbr_api = team_inj_item['team']['abbreviation']
         team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
         team_inj = []
-        num_out = 0.0  # Float for partial impact
+        num_out = 0.0  # Will use BPM impacts
         for inj in team_inj_item.get('injuries', []):
             athlete = inj['athlete']
             player_name = athlete['displayName']
@@ -2667,17 +2711,17 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
                 except ValueError:
                     pass
             
-            # Consider out if no return date or after game date (strict > for same day GTD available)
+            # Consider out if no return date or after game date
             is_out = return_date is None or return_date > game_date
             if is_out:
-                # Partial impact based on status
+                # Get BPM impact (stronger model)
+                impact = get_player_bpm_impact(player_name, season)
+                # Scale by status: OUT=full, GTD/Questionable=0.5
                 status_lower = fantasy_status.lower()
-                impact = 0
-                if 'out' in status_lower:
-                    impact = 1.0
-                elif any(term in status_lower for term in ['day-to-day', 'questionable', 'gtd']):
-                    impact = 0.5
-                num_out += impact
+                scale = 1.0
+                if any(term in status_lower for term in ['day-to-day', 'questionable', 'gtd']):
+                    scale = 0.5
+                num_out += impact * scale
                 team_inj.append({
                     'name': player_name,
                     'status': fantasy_status,
@@ -2685,13 +2729,13 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
                     'return_date': return_date
                 })
         
-        adjust = -impact_per_player * num_out  # Negative impact on NRTG
+        # No fixed impact_per_player; use summed BPM impacts directly
         if team_abbr == home_abbr:
             inj_home = team_inj
-            adjust_home = adjust
+            adjust_home = -num_out  # Negative for team NRTG
         elif team_abbr == away_abbr:
             inj_away = team_inj
-            adjust_away = adjust
+            adjust_away = -num_out
     
     return inj_home, inj_away, adjust_home, adjust_away
 
@@ -2786,7 +2830,7 @@ with tab_ml:
     nrtg_away = float(team_nrtg.get(away, 0.0))
     # Fetch injuries from ESPN
     summary = get_espn_game_summary(event_id)
-    inj_home, inj_away, adjust_home, adjust_away = extract_injuries_from_summary(summary, home, away, ml_date)
+    inj_home, inj_away, adjust_home, adjust_away = extract_injuries_from_summary(summary, home, away, ml_date, season)
     # Adjusted NRTG
     nrtg_home_adj = nrtg_home + adjust_home  # adjust is negative
     nrtg_away_adj = nrtg_away + adjust_away
@@ -2887,7 +2931,7 @@ with tab_ml:
                 st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
         else:
             st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_home:+.1f} (simple model)*")
+        st.write(f"*NRTG Adjustment: {adjust_home:+.1f} (BPM model)*")
     with col2:
         st.write(f"**{away} Out ({len(inj_away)} players):**")
         if inj_away:
@@ -2896,7 +2940,7 @@ with tab_ml:
                 st.write(f"- {i['name']} ({i['status']}, {i['injury']}, return {ret_str})")
         else:
             st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_away:+.1f} (simple model)*")
+        st.write(f"*NRTG Adjustment: {adjust_away:+.1f} (BPM model)*")
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     # -----------------------
     # Sportsbook Odds Inputs
