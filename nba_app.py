@@ -2638,59 +2638,58 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
     inj_away = []
     adjust_home = 0.0
     adjust_away = 0.0
-    if 'boxscore' not in summary:
-        return inj_home, inj_away, adjust_home, adjust_away
     
-    box_teams = summary['boxscore'].get('teams', [])
+    injuries_top = summary.get('injuries', [])
     impact_per_player = 1.5  # Simple adjustment per out player (approx NRTG impact)
     
-    for team_data in box_teams:
-        team = team_data.get('team', {})
-        abbr = team.get('abbreviation', '')
-        injuries = team.get('injuries', [])
+    # Map API abbrevs to app abbrevs
+    abbr_map = {'GS': 'GSW'}  # Add more as needed
+    
+    for team_inj_item in injuries_top:
+        team_abbr_api = team_inj_item['team']['abbreviation']
+        team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
         team_inj = []
-        num_out = 0.0  # Float for partial impact
-        for inj in injuries:
+        num_out = 0.0
+        for inj in team_inj_item.get('injuries', []):
+            athlete = inj['athlete']
+            player_name = athlete['displayName']
             details = inj.get('details', {})
             fantasy_status = details.get('fantasyStatus', {}).get('description', '')
-            athlete = inj.get('athlete', {})
-            player_name = athlete.get('shortName', athlete.get('displayName', 'Unknown'))
-            injury_type = details.get('comment', details.get('name', 'Injury'))
-            return_date_str = details.get('returnDate', '')
+            injury_type = details.get('type', '')
+            detail = details.get('detail', '')
+            full_injury = f"{injury_type} ({detail})" if detail else injury_type
+            return_date_str = details.get('returnDate')
             
             return_date = None
             if return_date_str:
                 try:
-                    # Handle YYYY-MM-DD or ISO with Z
-                    if 'T' in return_date_str:
-                        return_date = datetime.datetime.fromisoformat(return_date_str.replace('Z', '+00:00')).date()
-                    else:
-                        return_date = datetime.datetime.fromisoformat(return_date_str).date()
+                    return_date = datetime.date.fromisoformat(return_date_str)
                 except ValueError:
                     pass
             
-            # Include if projected out: no return or after game date
+            # Consider out if no return date or after game date
             is_out = return_date is None or return_date > game_date
             if is_out:
+                # Partial impact based on status
                 status_lower = fantasy_status.lower()
                 impact = 0
                 if 'out' in status_lower:
                     impact = 1.0
-                elif 'day-to-day' in status_lower or 'questionable' in status_lower:
+                elif any(term in status_lower for term in ['day-to-day', 'questionable', 'gtd']):
                     impact = 0.5
                 num_out += impact
                 team_inj.append({
                     'name': player_name,
                     'status': fantasy_status,
-                    'injury': injury_type,
+                    'injury': full_injury,
                     'return_date': return_date
                 })
         
         adjust = -impact_per_player * num_out  # Negative impact on NRTG
-        if abbr == home_abbr:
+        if team_abbr == home_abbr:
             inj_home = team_inj
             adjust_home = adjust
-        elif abbr == away_abbr:
+        elif team_abbr == away_abbr:
             inj_away = team_inj
             adjust_away = adjust
     
