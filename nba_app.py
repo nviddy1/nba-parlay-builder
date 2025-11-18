@@ -2541,10 +2541,21 @@ with tab_matchups:
 # =========================
 import textwrap
 import numpy as np
+
+# 2-letter to 3-letter mapping for logos
+ABBREV_MAP = {
+    "SA": "SAS",
+    "GS": "GSW",
+    "NO": "NOP",
+    "NY": "NYK",
+    # Add more if needed
+}
+
 with tab_ml:
     # --- Helper for logo + text ---
     def team_html(team):
-        logo = f"https://a.espncdn.com/i/teamlogos/nba/500/svg/{team.lower()}.svg"
+        team_key = ABBREV_MAP.get(team, team)
+        logo = TEAM_LOGOS.get(team_key, "")
         return f'<span style="display:inline-flex; align-items:center; gap:6px;"><img src="{logo}" width="20" style="border-radius:3px;" /><span>{team}</span></span>'
 
     st.subheader("📉 ML & Spread Analyzer")
@@ -2601,7 +2612,7 @@ with tab_ml:
     diff = strength_home - strength_away
     # Convert rating diff → spread & win prob
     est_spread = round(diff / 2.8, 1)
-    win_prob_home = 1 / (1 + np.exp(-diff / 25))
+    win_prob_home = 1 / (1 + np.exp(-diff / 7.5))
     win_prob_away = 1 - win_prob_home
     def prob_to_ml(p):
         if p <= 0 or p >= 1:
