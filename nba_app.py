@@ -2551,12 +2551,13 @@ import streamlit as st
 from nba_api.stats.endpoints import leaguegamelog, leaguedashplayerstats
 
 # 2-letter to 3-letter mapping for logos and abbrevs
-ABBREV_MAP = {
-    "SA": "SAS",
-    "GS": "GSW",
-    "NO": "NOP",
-    "NY": "NYK",
-    # Add more if needed
+abbr_map = {
+    'GS': 'GSW',
+    'SA': 'SAS',
+    'SAS': 'SAS',
+    'NO': 'NOP',
+    'UT': 'UTA',
+    'UTA': 'UTA'
 }
 
 
