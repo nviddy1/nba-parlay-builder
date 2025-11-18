@@ -2736,4 +2736,87 @@ with tab_ml:
     # --- Projected Line Section ---
     st.markdown("### 📊 Game Predictions")
     projected_html = textwrap.dedent(f"""
-        <div style='margin-top:10px; display:
+        <div style='margin-top:10px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;'>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread:+}</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
+                </div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
+                </div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
+                </div>
+            </div>
+        </div>
+    """).strip()
+    st.markdown(projected_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # -----------------------
+    # Sportsbook Odds Inputs
+    # -----------------------
+    st.markdown("### 📑 Compare With Sportsbook Odds")
+    col1, col2 = st.columns(2)
+    with col1:
+        user_ml_home = st.number_input(f"{home} ML", value=0, step=10)
+        user_spread_home = st.number_input(f"{home} Spread Odds", value=0, step=10)
+    with col2:
+        user_ml_away = st.number_input(f"{away} ML", value=0, step=10)
+        user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
+    # --- Edge Calculation ---
+    def american_to_implied(odds):
+        if odds > 0:
+            return 100 / (odds + 100)
+        elif odds < 0:
+            return abs(odds) / (abs(odds) + 100)
+        else:
+            return None
+
+    def edge(model_prob, book_odds):
+        book_prob = american_to_implied(book_odds)
+        if book_prob is None:
+            return None
+        return (model_prob - book_prob) * 100
+    edge_home_ml = edge(win_prob_home, user_ml_home)
+    edge_away_ml = edge(win_prob_away, user_ml_away)
+    # --- EV Card Helper ---
+    def edge_line(team, model_prob, fair, book, ev):
+        ev_str = "—" if ev is None else f"{ev:.2f}%"
+        color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
+        return textwrap.dedent(f"""
+            <div style="padding:12px;border:1px solid #333;border-radius:10px;
+                        margin-bottom:12px;background:#1e1e1e;">
+                <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">
+                    {team_html(team)}
+                </div>
+                <div style="font-size:0.9rem;color:#ddd;">
+                    Model Win Prob: {model_prob*100:.1f}% <br>
+                    Fair Odds: {fair} <br>
+                    Sportsbook Odds: {book} <br>
+                    <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
+                </div>
+            </div>
+        """).strip()
+    # --- EV Output ---
+    st.markdown("### 💰 EV Analysis (Moneyline)")
+    st.markdown(
+        edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml),
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml),
+        unsafe_allow_html=True
+    )
