@@ -12,6 +12,8 @@ from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 import requests
 from datetime import datetime, timedelta
 import pytz
+from nba_api.stats.endpoints import leaguedashplayerstats
+
 
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
@@ -2632,68 +2634,161 @@ def get_espn_game_summary(event_id: str) -> dict:
         pass
     return {}
 
-def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: datetime.date) -> tuple:
-    """Extract out players for home and away from summary."""
+def extract_injuries_from_summary(
+    summary: dict,
+    home_abbr: str,
+    away_abbr: str,
+    game_date: datetime.date,
+    player_impacts: pd.DataFrame | None = None,
+) -> tuple:
+    """
+    Extract out players for home and away from ESPN summary and compute
+    NRTG adjustments that scale with player importance (minutes / impact).
+    """
     inj_home = []
     inj_away = []
     adjust_home = 0.0
     adjust_away = 0.0
-    
-    injuries_top = summary.get('injuries', [])
-    impact_per_player = 1.5  # Simple adjustment per out player (approx NRTG impact)
-    
+
+    injuries_top = summary.get("injuries", [])
+
     # Map API abbrevs to app abbrevs
-    abbr_map = {'GS': 'GSW'}  # Add more as needed
-    
+    abbr_map = {"GS": "GSW"}  # extend if needed
+
+    # If we have player impacts, index for fast lookup
+    if player_impacts is not None and not player_impacts.empty:
+        impact_lookup = (
+            player_impacts
+            .set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"]
+            .to_dict()
+        )
+    else:
+        impact_lookup = {}
+
+    # Global scaling so a "full" starter-level absence ~1.5 NRTG
+    impact_scale = 1.5
+
+    def get_player_impact(name: str) -> float:
+        """
+        Look up impact score by name, fallback to 1.0 if unknown.
+        """
+        if not impact_lookup:
+            return 1.0
+        key = name.upper()
+        return float(impact_lookup.get(key, 1.0))
+
     for team_inj_item in injuries_top:
-        team_abbr_api = team_inj_item['team']['abbreviation']
+        team_abbr_api = team_inj_item["team"]["abbreviation"]
         team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
+
         team_inj = []
-        num_out = 0.0  # Float for partial impact
-        for inj in team_inj_item.get('injuries', []):
-            athlete = inj['athlete']
-            player_name = athlete['displayName']
-            details = inj.get('details', {})
-            fantasy_status = details.get('fantasyStatus', {}).get('description', '')
-            injury_type = details.get('type', '')
-            detail = details.get('detail', '')
+        total_importance = 0.0
+
+        for inj in team_inj_item.get("injuries", []):
+            athlete = inj["athlete"]
+            player_name = athlete["displayName"]
+            details = inj.get("details", {})
+
+            fantasy_status = details.get("fantasyStatus", {}).get("description", "")
+            injury_type = details.get("type", "")
+            detail = details.get("detail", "")
             full_injury = f"{injury_type} ({detail})" if detail else injury_type
-            return_date_str = details.get('returnDate')
-            
+
+            return_date_str = details.get("returnDate")
             return_date = None
             if return_date_str:
                 try:
                     return_date = datetime.date.fromisoformat(return_date_str)
                 except ValueError:
                     pass
-            
-            # Consider out if no return date or after game date (strict > for same day GTD available)
+
+            # Consider out if no return date or after game date
             is_out = return_date is None or return_date > game_date
-            if is_out:
-                # Partial impact based on status
-                status_lower = fantasy_status.lower()
-                impact = 0
-                if 'out' in status_lower:
-                    impact = 1.0
-                elif any(term in status_lower for term in ['day-to-day', 'questionable', 'gtd']):
-                    impact = 0.5
-                num_out += impact
-                team_inj.append({
-                    'name': player_name,
-                    'status': fantasy_status,
-                    'injury': full_injury,
-                    'return_date': return_date
-                })
-        
-        adjust = -impact_per_player * num_out  # Negative impact on NRTG
+            if not is_out:
+                continue
+
+            # Status weight (how likely / how fully they're out)
+            status_lower = fantasy_status.lower()
+            if "out" in status_lower:
+                status_weight = 1.0
+            elif any(term in status_lower for term in ["day-to-day", "questionable", "gtd"]):
+                status_weight = 0.5
+            else:
+                status_weight = 0.75  # default partial weight
+
+            player_importance = get_player_impact(player_name)
+            total_importance += status_weight * player_importance
+
+            team_inj.append(
+                {
+                    "name": player_name,
+                    "status": fantasy_status,
+                    "injury": full_injury,
+                    "return_date": return_date,
+                    "impact_score": round(player_importance, 2),
+                    "status_weight": status_weight,
+                }
+            )
+
+        # Convert total importance into NRTG shift (negative = worse)
+        adjust = -impact_scale * total_importance
+
         if team_abbr == home_abbr:
             inj_home = team_inj
             adjust_home = adjust
         elif team_abbr == away_abbr:
             inj_away = team_inj
             adjust_away = adjust
-    
+
     return inj_home, inj_away, adjust_home, adjust_away
+
+@st.cache_data(show_spinner=False)
+def load_player_impact(season: str) -> pd.DataFrame:
+    """
+    Load per-player impact scores based on minutes and net rating.
+    Higher-minute, high-impact players get larger scores.
+    """
+    try:
+        df = leaguedashplayerstats.LeagueDashPlayerStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            per_mode_detailed="PerGame",
+            measure_type_detailed_defense="Advanced",
+            timeout=60
+        ).get_data_frames()[0]
+    except Exception:
+        return pd.DataFrame()
+
+    if df.empty:
+        return df
+
+    # Normalize key fields
+    df["PLAYER_NAME_UPPER"] = df["PLAYER_NAME"].str.upper()
+
+    # Minutes and net rating
+    mins = pd.to_numeric(df["MIN"], errors="coerce").fillna(0)
+    net = pd.to_numeric(df.get("NET_RATING", 0), errors="coerce").fillna(0)
+
+    # Simple impact heuristic:
+    # - Base importance from minutes (bench guys < starters)
+    # - Tilt slightly by net rating, but clamp so it doesn't explode
+    minute_factor = mins / 24.0      # ~1 for 24 MPG guy, ~1.5 for 36 MPG
+    net_factor = 1 + (net / 20.0)    # +/- 0.5 at extreme ~+/-10 NET_RATING
+    raw = minute_factor * net_factor
+
+    # Clamp to a reasonable band (e.g. 0.2–2.0) so stars matter more but not insane
+    impact_score = raw.clip(lower=0.2, upper=2.0)
+
+    df["IMPACT_SCORE"] = impact_score
+
+    return df[[
+        "PLAYER_NAME_UPPER",
+        "TEAM_ABBREVIATION",
+        "IMPACT_SCORE",
+        "MIN",
+        "NET_RATING"
+    ]]
+
 
 def extract_games_from_scoreboard(scoreboard):
     """Return list of games with home/away abbreviations + status + event_id."""
@@ -2770,6 +2865,7 @@ with tab_ml:
     # --- Build Net Strength Model ---
     season = get_current_season_str()
     logs_team = load_enhanced_team_logs(season)
+    player_impacts = load_player_impact(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
         st.stop()
@@ -2786,7 +2882,13 @@ with tab_ml:
     nrtg_away = float(team_nrtg.get(away, 0.0))
     # Fetch injuries from ESPN
     summary = get_espn_game_summary(event_id)
-    inj_home, inj_away, adjust_home, adjust_away = extract_injuries_from_summary(summary, home, away, ml_date)
+    inj_home, inj_away, adjust_home, adjust_away = extract_injuries_from_summary(
+        summary,
+        home,
+        away,
+        ml_date,
+        player_impacts=player_impacts
+    )
     # Adjusted NRTG
     nrtg_home_adj = nrtg_home + adjust_home  # adjust is negative
     nrtg_away_adj = nrtg_away + adjust_away
