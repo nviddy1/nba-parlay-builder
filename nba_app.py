@@ -1299,7 +1299,7 @@ NBA_CUP_DATES = pd.to_datetime([
 # TABS
 # =========================
 tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_ml = st.tabs(
-    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💵 ML & Spread"]
+    ["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💵 ML, Spread, & Totals"]
 )
 
 # =========================
@@ -2539,7 +2539,7 @@ with tab_matchups:
 
 
 # =========================
-# TAB 7: MONEYLINE & SPREAD
+# TAB 7: MONEYLINE, SPREAD, & TOTALS
 # =========================
 import textwrap
 import numpy as np
@@ -2824,7 +2824,7 @@ with tab_ml:
         team_key = ABBREV_MAP.get(team, team)
         logo = TEAM_LOGOS.get(team_key, "")
         return f'<span style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;"><img src="{logo}" width="20" style="border-radius:3px; vertical-align:middle;" /><span style="vertical-align:middle;">{team}</span></span>'
-    st.subheader("📉 ML & Spread Analyzer")
+    st.subheader("💵 ML, Spread, & Totals Analyzer")
     st.caption("Get live projections and edges for moneyline & spread using team strength and game context")
     # --- Filters Row (SIDE-BY-SIDE) ---
     fc1, fc2 = st.columns([1, 1])
