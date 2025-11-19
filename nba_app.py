@@ -3027,20 +3027,33 @@ def extract_games_from_scoreboard(scoreboard):
     for ev in scoreboard["events"]:
         try:
             comp = ev["competitions"][0]
-            t_away = comp["competitors"][0] # away
-            t_home = comp["competitors"][1] # home
-            away_abbr = t_away["team"].get("abbreviation", "")
-            home_abbr = t_home["team"].get("abbreviation", "")
-            # Map 2-letter to 3-letter for consistency
-            away_abbr = ABBREV_MAP.get(away_abbr, away_abbr)
-            home_abbr = ABBREV_MAP.get(home_abbr, home_abbr)
+            competitors = comp["competitors"]
+            if len(competitors) != 2:
+                raise ValueError("Unexpected number of competitors")
+            
+            # FIXED: Parse dynamically by homeAway
+            away_abbr, home_abbr = "", ""
+            for t in competitors:
+                ha = t.get("homeAway", None)
+                abbr = t["team"].get("abbreviation", "")
+                if ha == "away":
+                    away_abbr = abbr
+                elif ha == "home":
+                    home_abbr = abbr
+                else:
+                    # Fallback to order if no homeAway (rare)
+                    if away_abbr == "":
+                        away_abbr = abbr
+                    else:
+                        home_abbr = abbr
+            
             status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
             games.append(
                 {
                     "home": home_abbr,
                     "away": away_abbr,
                     "status": status,
-                    "event_id": ev["id"]
+                    "event_id": ev["id"]  # Preserved for ESPN summary
                 }
             )
         except Exception:
