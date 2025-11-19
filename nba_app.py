@@ -2055,45 +2055,45 @@ with tab_me:
     # ---------- Helpers ----------
 
     def extract_games_from_scoreboard(scoreboard):
-    """Return list of games with home/away abbreviations + status + event_id."""
-    games = []
-    if not scoreboard or "events" not in scoreboard:
-        return games
-    for ev in scoreboard["events"]:
-        try:
-            comp = ev["competitions"][0]
-            competitors = comp["competitors"]
-            if len(competitors) != 2:
-                raise ValueError("Unexpected number of competitors")
-            
-            # FIXED: Parse dynamically by homeAway
-            away_abbr, home_abbr = "", ""
-            for t in competitors:
-                ha = t.get("homeAway", None)
-                abbr = t["team"].get("abbreviation", "")
-                if ha == "away":
-                    away_abbr = abbr
-                elif ha == "home":
-                    home_abbr = abbr
-                else:
-                    # Fallback to order if no homeAway (rare)
-                    if away_abbr == "":
+        """Return list of games with home/away abbreviations + status + event_id."""
+        games = []
+        if not scoreboard or "events" not in scoreboard:
+            return games
+        for ev in scoreboard["events"]:
+            try:
+                comp = ev["competitions"][0]
+                competitors = comp["competitors"]
+                if len(competitors) != 2:
+                    raise ValueError("Unexpected number of competitors")
+                
+                # FIXED: Parse dynamically by homeAway
+                away_abbr, home_abbr = "", ""
+                for t in competitors:
+                    ha = t.get("homeAway", None)
+                    abbr = t["team"].get("abbreviation", "")
+                    if ha == "away":
                         away_abbr = abbr
-                    else:
+                    elif ha == "home":
                         home_abbr = abbr
-            
-            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
-            games.append(
-                {
-                    "home": home_abbr,
-                    "away": away_abbr,
-                    "status": status,
-                    "event_id": ev["id"]  # Optional, for future use
-                }
-            )
-        except Exception:
-            continue
-    return games
+                    else:
+                        # Fallback to order if no homeAway (rare)
+                        if away_abbr == "":
+                            away_abbr = abbr
+                        else:
+                            home_abbr = abbr
+                
+                status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
+                games.append(
+                    {
+                        "home": home_abbr,
+                        "away": away_abbr,
+                        "status": status,
+                        "event_id": ev["id"]  # Optional, for future use
+                    }
+                )
+            except Exception:
+                continue
+        return games
 
     def ordinal(n: int) -> str:
         if 10 <= n % 100 <= 20:
