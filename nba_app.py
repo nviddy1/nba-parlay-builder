@@ -1289,9 +1289,7 @@ def render_mc_distribution_card(mean_val, median_val, stdev, p10, p90, hit_prob)
 
 # Define NBA_CUP_DATES (example dates; update as needed for the season)
 NBA_CUP_DATES = pd.to_datetime([
-    # Add actual NBA In-Season Tournament dates here, e.g.,
-    # "2024-11-12", "2024-11-13", etc.
-    # For 2025-26 season, placeholder empty for now
+"2024-11-12", "2024-11-15", "2024-11-19", "2024-11-22", "2024-11-26", "2024-11-29", "2024-12-03", "2024-12-10", "2024-12-11", "2024-12-14", "2024-12-17", "2025-10-31", "2025-11-07", "2025-11-14", "2025-11-21", "2025-11-25", "2025-11-26", "2025-11-28","2025-12-09", "2025-12-10", "2025-12-13", "2025-12-16"
 ])
 
 
