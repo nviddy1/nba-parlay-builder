@@ -2545,642 +2545,812 @@ import pandas as pd
 import requests
 import datetime
 import streamlit as st
+try:
+    import xgboost as xgb
+    XGB_AVAILABLE = True
+except ImportError:
+    xgb = None
+    XGB_AVAILABLE = False
+    st.warning("xgboost not installed. Falling back to base efficiency model. Install via pip install xgboost for ML enhancements.")
 from nba_api.stats.endpoints import leaguegamelog, leaguedashplayerstats
 # 2-letter to 3-letter mapping for logos and abbrevs
 ABBREV_MAP = {
-    "GS": "GSW",
-    "NO": "NOP",
-    "UT": "UTA",
-    "SA": "SAS",
-    "LA": "LAL",
-    "NY": "NYK",
-    "WSH": "WAS",
-    # Pass-throughs for already-canonical codes, optional but harmless:
-    "GSW": "GSW",
-    "NOP": "NOP",
-    "UTA": "UTA",
-    "SAS": "SAS",
-    "LAL": "LAL",
-    "NYK": "NYK",
-    "WAS": "WAS",
+    "GS": "GSW",
+    "NO": "NOP",
+    "UT": "UTA",
+    "SA": "SAS",
+    "LA": "LAL",
+    "NY": "NYK",
+    "WSH": "WAS",
+    # Pass-throughs for already-canonical codes, optional but harmless:
+    "GSW": "GSW",
+    "NOP": "NOP",
+    "UTA": "UTA",
+    "SAS": "SAS",
+    "LAL": "LAL",
+    "NYK": "NYK",
+    "WAS": "WAS",
 }
 @st.cache_data(show_spinner=False)
 def load_enhanced_team_logs(season: str) -> pd.DataFrame:
-    """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
-    try:
-        df = leaguegamelog.LeagueGameLog(
-            season=season,
-            season_type_all_star="Regular Season",
-            player_or_team_abbreviation="T",
-            timeout=60
-        ).get_data_frames()[0]
-    except Exception:
-        return pd.DataFrame()
-    if df.empty:
-        return df
-    # Ensure numeric columns
-    num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
-    for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    # Extract opponent
-    df["OPP"] = (
-        df["MATCHUP"].astype(str)
-        .str.extract(r"vs\. (\w+)|@ (\w+)", expand=True)
-        .bfill(axis=1).iloc[:, 0]
-    )
-    # Compute possessions
-    df['poss'] = df['FGA'] + 0.44 * df['FTA'] - df['OREB'] + df['TOV']
-    # Compute opponent stats by grouping per game
-    def get_opp_stats(group):
-        if len(group) < 2:
-            group['opp_pts'] = np.nan
-            group['opp_poss'] = np.nan
-            return group
-        teams = group['TEAM_ABBREVIATION'].unique()
-        if len(teams) != 2:
-            group['opp_pts'] = np.nan
-            group['opp_poss'] = np.nan
-            return group
-        team_a, team_b = teams
-        pts_a = group[group['TEAM_ABBREVIATION'] == team_a]['PTS'].iloc[0]
-        poss_a = group[group['TEAM_ABBREVIATION'] == team_a]['poss'].iloc[0]
-        pts_b = group[group['TEAM_ABBREVIATION'] == team_b]['PTS'].iloc[0]
-        poss_b = group[group['TEAM_ABBREVIATION'] == team_b]['poss'].iloc[0]
-        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_pts'] = pts_b
-        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_poss'] = poss_b
-        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_pts'] = pts_a
-        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_poss'] = poss_a
-        return group
-    df = df.groupby('GAME_ID', group_keys=False).apply(get_opp_stats).reset_index(drop=True)
-    # Compute ratings (avoid div by zero)
-    df['ortg'] = np.where(df['poss'] > 0, df['PTS'] / df['poss'] * 100, 0)
-    df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
-    df['nrtg'] = df['ortg'] - df['drtg']
-    return df
+    """Fetch and enhance team logs with ORTG, DRTG, NRTG."""
+    try:
+        df = leaguegamelog.LeagueGameLog(
+            season=season,
+            season_type_all_star="Regular Season",
+            player_or_team_abbreviation="T",
+            timeout=60
+        ).get_data_frames()[0]
+    except Exception:
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'], errors='coerce')
+    # Ensure numeric columns
+    num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    # Extract opponent
+    df["OPP"] = (
+        df["MATCHUP"].astype(str)
+        .str.extract(r"vs. (\w+)|@ (\w+)", expand=True)
+        .bfill(axis=1).iloc[:, 0]
+    )
+    # Compute possessions
+    df['poss'] = df['FGA'] + 0.44 * df['FTA'] - df['OREB'] + df['TOV']
+    # Compute opponent stats by grouping per game
+    def get_opp_stats(group):
+        if len(group) < 2:
+            group['opp_pts'] = np.nan
+            group['opp_poss'] = np.nan
+            return group
+        teams = group['TEAM_ABBREVIATION'].unique()
+        if len(teams) != 2:
+            group['opp_pts'] = np.nan
+            group['opp_poss'] = np.nan
+            return group
+        team_a, team_b = teams
+        pts_a = group[group['TEAM_ABBREVIATION'] == team_a]['PTS'].iloc[0]
+        poss_a = group[group['TEAM_ABBREVIATION'] == team_a]['poss'].iloc[0]
+        pts_b = group[group['TEAM_ABBREVIATION'] == team_b]['PTS'].iloc[0]
+        poss_b = group[group['TEAM_ABBREVIATION'] == team_b]['poss'].iloc[0]
+        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_pts'] = pts_b
+        group.loc[group['TEAM_ABBREVIATION'] == team_a, 'opp_poss'] = poss_b
+        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_pts'] = pts_a
+        group.loc[group['TEAM_ABBREVIATION'] == team_b, 'opp_poss'] = poss_a
+        return group
+    df = df.groupby('GAME_ID', group_keys=False).apply(get_opp_stats).reset_index(drop=True)
+    # Compute ratings (avoid div by zero)
+    df['ortg'] = np.where(df['poss'] > 0, df['PTS'] / df['poss'] * 100, 0)
+    df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
+    df['nrtg'] = df['ortg'] - df['drtg']
+    return df
+def get_rest_days(team: str, logs: pd.DataFrame, game_date: datetime.date) -> int:
+    """Compute rest days for a team before a given game date."""
+    team_games = logs[logs['TEAM_ABBREVIATION'] == team].copy()
+    if team_games.empty:
+        return 0
+    past_games = team_games[team_games['GAME_DATE'] < pd.Timestamp(game_date)]
+    if past_games.empty:
+        return 99 # No prior games
+    last_game_date = past_games['GAME_DATE'].max().date()
+    rest_days = (game_date - last_game_date).days
+    return rest_days
+@st.cache_data(show_spinner=False)
+def train_margin_model(season: str):
+    """Train XGBoost model for projected home margin on historical data."""
+    global XGB_AVAILABLE
+    if not XGB_AVAILABLE:
+        return None
+    prev_season = f"{int(season.split('-')[0]) - 1}-{season.split('-')[1]}"
+    logs = load_enhanced_team_logs(prev_season)
+    if logs.empty:
+        return None
+    # Compute season averages (simplified; use full season for demo - in prod, use rolling pre-game)
+    team_ortg = logs.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_poss = logs.groupby("TEAM_ABBREVIATION")["poss"].mean()
+    # Group by game
+    games = logs.groupby('GAME_ID')
+    features_list = []
+    margins = []
+    hca_val = 2.7
+    for gid, group in games:
+        if len(group) != 2:
+            continue
+        teams = group['TEAM_ABBREVIATION'].unique()
+        if len(teams) != 2:
+            continue
+        matchup_home = group.iloc[0]['MATCHUP']
+        if 'vs' in matchup_home:
+            home = group.iloc[0]['TEAM_ABBREVIATION']
+            away = group.iloc[1]['TEAM_ABBREVIATION']
+        else:
+            home = group.iloc[1]['TEAM_ABBREVIATION']
+            away = group.iloc[0]['TEAM_ABBREVIATION']
+        home_row = group[group['TEAM_ABBREVIATION'] == home].iloc[0]
+        away_row = group[group['TEAM_ABBREVIATION'] == away].iloc[0]
+        actual_margin = home_row['PTS'] - away_row['PTS']
+        game_date = home_row['GAME_DATE'].date()
+        rest_home = get_rest_days(home, logs, game_date)
+        rest_away = get_rest_days(away, logs, game_date)
+        rest_d = rest_home - rest_away
+        ortg_home_pre = float(team_ortg.get(home, 110.0))
+        ortg_away_pre = float(team_ortg.get(away, 110.0))
+        drtg_home_pre = float(team_drtg.get(home, 110.0))
+        drtg_away_pre = float(team_drtg.get(away, 110.0))
+        poss_avg = float((team_poss.get(home, 98.0) + team_poss.get(away, 98.0)) / 2)
+        ortg_diff = ortg_home_pre - ortg_away_pre
+        drtg_diff = drtg_home_pre - drtg_away_pre
+        features = [ortg_diff, drtg_diff, poss_avg, 0.0, 0.0, hca_val, rest_d]
+        features_list.append(features)
+        margins.append(actual_margin)
+    if len(margins) < 50:
+        return None
+    X = np.array(features_list)
+    y = np.array(margins)
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+    model.fit(X, y)
+    return model
+@st.cache_data(show_spinner=False)
+def train_total_model(season: str):
+    """Train XGBoost model for projected total points on historical data."""
+    global XGB_AVAILABLE
+    if not XGB_AVAILABLE:
+        return None
+    prev_season = f"{int(season.split('-')[0]) - 1}-{season.split('-')[1]}"
+    logs = load_enhanced_team_logs(prev_season)
+    if logs.empty:
+        return None
+    # Compute season averages (simplified; use full season for demo - in prod, use rolling pre-game)
+    team_ortg = logs.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_poss = logs.groupby("TEAM_ABBREVIATION")["poss"].mean()
+    # Group by game
+    games = logs.groupby('GAME_ID')
+    features_list = []
+    totals = []
+    for gid, group in games:
+        if len(group) != 2:
+            continue
+        teams = group['TEAM_ABBREVIATION'].unique()
+        if len(teams) != 2:
+            continue
+        matchup_home = group.iloc[0]['MATCHUP']
+        if 'vs' in matchup_home:
+            home = group.iloc[0]['TEAM_ABBREVIATION']
+            away = group.iloc[1]['TEAM_ABBREVIATION']
+        else:
+            home = group.iloc[1]['TEAM_ABBREVIATION']
+            away = group.iloc[0]['TEAM_ABBREVIATION']
+        home_row = group[group['TEAM_ABBREVIATION'] == home].iloc[0]
+        away_row = group[group['TEAM_ABBREVIATION'] == away].iloc[0]
+        actual_total = home_row['PTS'] + away_row['PTS']
+        game_date = home_row['GAME_DATE'].date()
+        rest_home = get_rest_days(home, logs, game_date)
+        rest_away = get_rest_days(away, logs, game_date)
+        rest_d = rest_home - rest_away
+        ortg_home_pre = float(team_ortg.get(home, 110.0))
+        ortg_away_pre = float(team_ortg.get(away, 110.0))
+        drtg_home_pre = float(team_drtg.get(home, 110.0))
+        drtg_away_pre = float(team_drtg.get(away, 110.0))
+        poss_avg = float((team_poss.get(home, 98.0) + team_poss.get(away, 98.0)) / 2)
+        features = [ortg_home_pre, ortg_away_pre, drtg_home_pre, drtg_away_pre, poss_avg, 0.0, 0.0, rest_d]
+        features_list.append(features)
+        totals.append(actual_total)
+    if len(totals) < 50:
+        return None
+    X = np.array(features_list)
+    y = np.array(totals)
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+    model.fit(X, y)
+    return model
 @st.cache_data(show_spinner=False)
 def get_espn_game_summary(event_id: str) -> dict:
-    """Fetch ESPN game summary including injuries."""
-    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return {}
+    """Fetch ESPN game summary including injuries."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
 @st.cache_data(show_spinner=False)
 def load_player_impact(season: str) -> pd.DataFrame:
-    """
-    Load per-player impact scores based on minutes and net rating.
-    Higher-minute, high-impact players get larger scores.
-    """
-    try:
-        df = leaguedashplayerstats.LeagueDashPlayerStats(
-            season=season,
-            season_type_all_star="Regular Season",
-            per_mode_detailed="PerGame",
-            measure_type_detailed_defense="Advanced",
-            timeout=60
-        ).get_data_frames()[0]
-    except Exception:
-        return pd.DataFrame()
-    if df.empty:
-        return df
-    df["PLAYER_NAME_UPPER"] = df["PLAYER_NAME"].str.upper()
-    mins = pd.to_numeric(df["MIN"], errors="coerce").fillna(0)
-    net = pd.to_numeric(df.get("NET_RATING", 0), errors="coerce").fillna(0)
-    # Base importance from minutes, tilted by net rating
-    minute_factor = mins / 24.0 # ~1 for 24 MPG guy, ~1.5 for 36 MPG
-    net_factor = 1 + (net / 20.0) # +/- 0.5 at extreme ~+/-10 net rating
-    raw = minute_factor * net_factor
-    # Clamp reasonable band so stars matter more but not insane
-    impact_score = raw.clip(lower=0.2, upper=2.0)
-    df["IMPACT_SCORE"] = impact_score
-    return df[[
-        "PLAYER_NAME_UPPER",
-        "TEAM_ABBREVIATION",
-        "IMPACT_SCORE",
-        "MIN",
-        "NET_RATING",
-        "GP"  # Add games played for filtering
-    ]]
+    """
+    Load per-player impact scores based on minutes and net rating.
+    Higher-minute, high-impact players get larger scores.
+    """
+    try:
+        df = leaguedashplayerstats.LeagueDashPlayerStats(
+            season=season,
+            season_type_all_star="Regular Season",
+            per_mode_detailed="PerGame",
+            measure_type_detailed_defense="Advanced",
+            timeout=60
+        ).get_data_frames()[0]
+    except Exception:
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    df["PLAYER_NAME_UPPER"] = df["PLAYER_NAME"].str.upper()
+    mins = pd.to_numeric(df["MIN"], errors="coerce").fillna(0)
+    net = pd.to_numeric(df.get("NET_RATING", 0), errors="coerce").fillna(0)
+    # Base importance from minutes, tilted by net rating
+    minute_factor = mins / 24.0 # ~1 for 24 MPG guy, ~1.5 for 36 MPG
+    net_factor = 1 + (net / 20.0) # +/- 0.5 at extreme ~+/-10 net rating
+    raw = minute_factor * net_factor
+    # Clamp reasonable band so stars matter more but not insane
+    impact_score = raw.clip(lower=0.2, upper=2.0)
+    df["IMPACT_SCORE"] = impact_score
+    return df[[
+        "PLAYER_NAME_UPPER",
+        "TEAM_ABBREVIATION",
+        "IMPACT_SCORE",
+        "MIN",
+        "NET_RATING",
+        "GP" # Add games played for filtering
+    ]]
 @st.cache_data(show_spinner=False)
 def load_rapm_data(season: str) -> pd.DataFrame:
-    """
-    Load RAPM (Regularized Adjusted Plus-Minus) data.
-    For demo: Placeholder with sample data; in production, fetch from external CSV/API (e.g., basketball-reference).
-    """
-    # Sample RAPM data (replace with real fetch, e.g., pd.read_csv('rapm_2025.csv'))
-    sample_data = {
-        'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
-        'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
-        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2]  # Example values; positive = net positive impact
-    }
-    return pd.DataFrame(sample_data)
+    """
+    Load RAPM (Regularized Adjusted Plus-Minus) data.
+    For demo: Placeholder with sample data; in production, fetch from external CSV/API (e.g., basketball-reference).
+    """
+    # Sample RAPM data (replace with real fetch, e.g., pd.read_csv('rapm_2025.csv'))
+    sample_data = {
+        'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
+        'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
+        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2] # Example values; positive = net positive impact
+    }
+    return pd.DataFrame(sample_data)
 @st.cache_data(show_spinner=False)
 def load_league_player_logs_upper(season: str) -> pd.DataFrame:
-    """
-    Wrapper around get_league_player_logs(season) that adds PLAYER_NAME_UPPER.
-    Assumes get_league_player_logs is defined elsewhere (used in Injury Impact tab).
-    """
-    logs = get_league_player_logs(season)
-    if logs is None or logs.empty:
-        return pd.DataFrame()
-    logs = logs.copy()
-    if "PLAYER_NAME" in logs.columns:
-        logs["PLAYER_NAME_UPPER"] = logs["PLAYER_NAME"].str.upper()
-    else:
-        logs["PLAYER_NAME_UPPER"] = ""
-    return logs
+    """
+    Wrapper around get_league_player_logs(season) that adds PLAYER_NAME_UPPER.
+    Assumes get_league_player_logs is defined elsewhere (used in Injury Impact tab).
+    """
+    logs = get_league_player_logs(season)
+    if logs is None or logs.empty:
+        return pd.DataFrame()
+    logs = logs.copy()
+    if "PLAYER_NAME" in logs.columns:
+        logs["PLAYER_NAME_UPPER"] = logs["PLAYER_NAME"].str.upper()
+    else:
+        logs["PLAYER_NAME_UPPER"] = ""
+    return logs
 def extract_injuries_from_summary(
-    summary: dict,
-    home_abbr: str,
-    away_abbr: str,
-    game_date: datetime.date,
-    player_impacts: pd.DataFrame | None,
-    logs_team: pd.DataFrame,
-    league_logs_upper: pd.DataFrame,
-    rapm_df: pd.DataFrame | None = None
+    summary: dict,
+    home_abbr: str,
+    away_abbr: str,
+    game_date: datetime.date,
+    player_impacts: pd.DataFrame | None,
+    logs_team: pd.DataFrame,
+    league_logs_upper: pd.DataFrame,
+    rapm_df: pd.DataFrame | None = None
 ) -> tuple:
-    """
-    Extract out players for home and away from ESPN summary and compute:
-      - NRTG adjustments based on player impact (minutes + status) + RAPM * matchup
-      - Offensive ORTG adjustments based on team ORTG with vs without player
-    """
-    inj_home = []
-    inj_away = []
-    adjust_home_nrtg = 0.0
-    adjust_away_nrtg = 0.0
-    adjust_home_ortg = 0.0
-    adjust_away_ortg = 0.0
-    injuries_top = summary.get("injuries", [])
-    # Map API abbrevs to app abbrevs
-    abbr_map = ABBREV_MAP
-    # Impact lookup from advanced stats
-    if player_impacts is not None and not player_impacts.empty:
-        impact_lookup = (
-            player_impacts
-            .set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"]
-            .to_dict()
-        )
-        gp_lookup = (
-            player_impacts
-            .set_index("PLAYER_NAME_UPPER")["GP"]
-            .to_dict()
-        )
-    else:
-        impact_lookup = {}
-        gp_lookup = {}
-    # RAPM lookup (Phase 1: Advanced player impact)
-    if rapm_df is not None and not rapm_df.empty:
-        rapm_lookup = (
-            rapm_df
-            .set_index(["PLAYER_NAME_UPPER", "TEAM_ABBREVIATION"])["RAPM"]
-            .to_dict()
-        )
-    else:
-        rapm_lookup = {}
-    # NRTG scaling so a full starter-level absence ~1.5 NRTG
-    impact_scale_nrtg = 1.5
-    # Phase 1: Simple matchup factor (1.0 neutral; adjust based on opp weakness, e.g., 1.2 vs poor D)
-    matchup_factor_home = 1.0  # Vs. away team; extend with positional defense data
-    matchup_factor_away = 1.0  # Vs. home team
-    # Pre-group team logs for quick access
-    team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
-    def get_player_impact(name_upper: str, team_abbr: str) -> float:
-        """Look up impact score by name, fallback to 1.0 if unknown. Exclude if <10% team games."""
-        if not impact_lookup:
-            return 1.0
-        gp = gp_lookup.get(name_upper, 0)
-        team_games = team_grouped.get(team_abbr, pd.DataFrame())
-        team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
-        min_games_threshold = max(1, int(0.1 * team_total_games))
-        if gp < min_games_threshold:
-            return 0.0  # No impact if insufficient games
-        return float(impact_lookup.get(name_upper, 1.0))
-    def compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
-        """
-        Compute team ORTG change when player is OUT:
-        ORTG_without - ORTG_with (positive => team scores more without).
-        Weighted down for small sample sizes.
-        """
-        if logs_team.empty or league_logs_upper.empty:
-            return 0.0
-        team_games = team_grouped.get(team_abbr, pd.DataFrame())
-        if team_games.empty:
-            return 0.0
-        team_total_games = team_games["GAME_ID"].nunique()
-        min_games_threshold = max(1, int(0.1 * team_total_games))
-        plog = league_logs_upper[
-            (league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) &
-            (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)
-        ]
-        if plog.empty:
-            return 0.0
-        games_with = set(plog["GAME_ID"].unique())
-        n_with = len(games_with)
-        if n_with < min_games_threshold:
-            return 0.0  # Skip if below 10% threshold
-        with_df = team_games[team_games["GAME_ID"].isin(games_with)]
-        without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
-        n_without = without_df["GAME_ID"].nunique()
-        # Need at least a few games without to have any idea
-        if n_without < 3:
-            return 0.0
-        ortg_with = with_df["ortg"].mean()
-        ortg_without = without_df["ortg"].mean()
-        raw_delta = ortg_without - ortg_with
-        # Sample-size weight (cap at 1.0 around 15+ games without), but also slack pickup factor
-        # Reduce delta by up to 50% if small n_without (assuming more slack in limited samples)
-        slack_factor = 1.0 - (0.5 * (1 - min(n_without / 15.0, 1.0)))
-        weight = min(n_without / 15.0, 1.0)
-        return float(raw_delta * weight * slack_factor)
-    for team_inj_item in injuries_top:
-        team_abbr_api = team_inj_item["team"]["abbreviation"]
-        team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
-        team_inj_list = []
-        team_nrtg_adj = 0.0
-        team_ortg_adj = 0.0
-        # Phase 1: Situational multipliers (e.g., rest/travel; fetch from ESPN summary or add input)
-        rest_multiplier = 1.0  # E.g., 0.95 if on back-to-back
-        matchup_factor = matchup_factor_home if team_abbr == home_abbr else matchup_factor_away
-        for inj in team_inj_item.get("injuries", []):
-            athlete = inj["athlete"]
-            player_name = athlete["displayName"]
-            player_name_upper = player_name.upper()
-            details = inj.get("details", {})
-            fantasy_status = details.get("fantasyStatus", {}).get("description", "")
-            injury_type = details.get("type", "")
-            detail = details.get("detail", "")
-            full_injury = f"{injury_type} ({detail})" if detail else injury_type
-            return_date_str = details.get("returnDate")
-            return_date = None
-            if return_date_str:
-                try:
-                    return_date = datetime.date.fromisoformat(return_date_str)
-                except ValueError:
-                    pass
-            # Consider out if no return date or after game date
-            is_out = return_date is None or return_date > game_date
-            if not is_out:
-                continue
-            # Status weight (how likely / fully they're out)
-            status_lower = fantasy_status.lower()
-            if "out" in status_lower:
-                status_weight = 1.0
-            elif any(term in status_lower for term in ["day-to-day", "questionable", "gtd"]):
-                status_weight = 0.5
-            else:
-                status_weight = 0.75 # default partial weight
-            player_importance = get_player_impact(player_name_upper, team_abbr)
-            # Phase 1: RAPM-enhanced NRTG impact
-            rapm_val = rapm_lookup.get((player_name_upper, team_abbr), 0.0)
-            rapm_adjust = -rapm_val * player_importance * 0.1 * status_weight * matchup_factor  # 10% of RAPM as additive
-            # Original impact + RAPM
-            base_adjust = -impact_scale_nrtg * player_importance * status_weight
-            team_nrtg_adj += (base_adjust + rapm_adjust) * rest_multiplier
-            # Offensive ORTG delta from on/off style calc
-            ortg_delta = compute_team_ortg_delta(team_abbr, player_name_upper)
-            team_ortg_adj += ortg_delta * status_weight
-            team_inj_list.append(
-                {
-                    "name": player_name,
-                    "status": fantasy_status,
-                    "injury": full_injury,
-                    "return_date": return_date,
-                    "impact_score": round(player_importance, 2),
-                    "rapm": round(rapm_val, 2),  # New: Show RAPM
-                    "status_weight": status_weight,
-                    "ortg_delta": round(ortg_delta, 2),
-                }
-            )
-        # Soft cap the adjustments so they don't explode on weird data
-        team_nrtg_adj = float(np.clip(team_nrtg_adj, -12, 12))
-        team_ortg_adj = float(np.clip(team_ortg_adj, -10, 10))
-        if team_abbr == home_abbr:
-            inj_home = team_inj_list
-            adjust_home_nrtg = team_nrtg_adj
-            adjust_home_ortg = team_ortg_adj
-        elif team_abbr == away_abbr:
-            inj_away = team_inj_list
-            adjust_away_nrtg = team_nrtg_adj
-            adjust_away_ortg = team_ortg_adj
-    return (
-        inj_home,
-        inj_away,
-        adjust_home_nrtg,
-        adjust_away_nrtg,
-        adjust_home_ortg,
-        adjust_away_ortg,
-    )
+    """
+    Extract out players for home and away from ESPN summary and compute:
+      - NRTG adjustments based on player impact (minutes + status) + RAPM * matchup
+      - Offensive ORTG adjustments based on team ORTG with vs without player
+    """
+    inj_home = []
+    inj_away = []
+    adjust_home_nrtg = 0.0
+    adjust_away_nrtg = 0.0
+    adjust_home_ortg = 0.0
+    adjust_away_ortg = 0.0
+    injuries_top = summary.get("injuries", [])
+    # Map API abbrevs to app abbrevs
+    abbr_map = ABBREV_MAP
+    # Impact lookup from advanced stats
+    if player_impacts is not None and not player_impacts.empty:
+        impact_lookup = (
+            player_impacts
+            .set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"]
+            .to_dict()
+        )
+        gp_lookup = (
+            player_impacts
+            .set_index("PLAYER_NAME_UPPER")["GP"]
+            .to_dict()
+        )
+    else:
+        impact_lookup = {}
+        gp_lookup = {}
+    # RAPM lookup (Phase 1: Advanced player impact)
+    if rapm_df is not None and not rapm_df.empty:
+        rapm_lookup = (
+            rapm_df
+            .set_index(["PLAYER_NAME_UPPER", "TEAM_ABBREVIATION"])["RAPM"]
+            .to_dict()
+        )
+    else:
+        rapm_lookup = {}
+    # NRTG scaling so a full starter-level absence ~1.5 NRTG
+    impact_scale_nrtg = 1.5
+    # Phase 1: Simple matchup factor (1.0 neutral; adjust based on opp weakness, e.g., 1.2 vs poor D)
+    matchup_factor_home = 1.0 # Vs. away team; extend with positional defense data
+    matchup_factor_away = 1.0 # Vs. home team
+    # Pre-group team logs for quick access
+    team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
+    def get_player_impact(name_upper: str, team_abbr: str) -> float:
+        """Look up impact score by name, fallback to 1.0 if unknown. Exclude if <10% team games."""
+        if not impact_lookup:
+            return 1.0
+        gp = gp_lookup.get(name_upper, 0)
+        team_games = team_grouped.get(team_abbr, pd.DataFrame())
+        team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
+        min_games_threshold = max(1, int(0.1 * team_total_games))
+        if gp < min_games_threshold:
+            return 0.0 # No impact if insufficient games
+        return float(impact_lookup.get(name_upper, 1.0))
+    def compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
+        """
+        Compute team ORTG change when player is OUT:
+        ORTG_without - ORTG_with (positive => team scores more without).
+        Weighted down for small sample sizes.
+        """
+        if logs_team.empty or league_logs_upper.empty:
+            return 0.0
+        team_games = team_grouped.get(team_abbr, pd.DataFrame())
+        if team_games.empty:
+            return 0.0
+        team_total_games = team_games["GAME_ID"].nunique()
+        min_games_threshold = max(1, int(0.1 * team_total_games))
+        plog = league_logs_upper[
+            (league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) &
+            (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)
+        ]
+        if plog.empty:
+            return 0.0
+        games_with = set(plog["GAME_ID"].unique())
+        n_with = len(games_with)
+        if n_with < min_games_threshold:
+            return 0.0 # Skip if below 10% threshold
+        with_df = team_games[team_games["GAME_ID"].isin(games_with)]
+        without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
+        n_without = without_df["GAME_ID"].nunique()
+        # Need at least a few games without to have any idea
+        if n_without < 3:
+            return 0.0
+        ortg_with = with_df["ortg"].mean()
+        ortg_without = without_df["ortg"].mean()
+        raw_delta = ortg_without - ortg_with
+        # Sample-size weight (cap at 1.0 around 15+ games without), but also slack pickup factor
+        # Reduce delta by up to 50% if small n_without (assuming more slack in limited samples)
+        slack_factor = 1.0 - (0.5 * (1 - min(n_without / 15.0, 1.0)))
+        weight = min(n_without / 15.0, 1.0)
+        return float(raw_delta * weight * slack_factor)
+    for team_inj_item in injuries_top:
+        team_abbr_api = team_inj_item["team"]["abbreviation"]
+        team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
+        team_inj_list = []
+        team_nrtg_adj = 0.0
+        team_ortg_adj = 0.0
+        # Phase 1: Situational multipliers (e.g., rest/travel; fetch from ESPN summary or add input)
+        rest_multiplier = 1.0 # E.g., 0.95 if on back-to-back
+        matchup_factor = matchup_factor_home if team_abbr == home_abbr else matchup_factor_away
+        for inj in team_inj_item.get("injuries", []):
+            athlete = inj["athlete"]
+            player_name = athlete["displayName"]
+            player_name_upper = player_name.upper()
+            details = inj.get("details", {})
+            fantasy_status = details.get("fantasyStatus", {}).get("description", "")
+            injury_type = details.get("type", "")
+            detail = details.get("detail", "")
+            full_injury = f"{injury_type} ({detail})" if detail else injury_type
+            return_date_str = details.get("returnDate")
+            return_date = None
+            if return_date_str:
+                try:
+                    return_date = datetime.date.fromisoformat(return_date_str)
+                except ValueError:
+                    pass
+            # Consider out if no return date or after game date
+            is_out = return_date is None or return_date > game_date
+            if not is_out:
+                continue
+            # Status weight (how likely / fully they're out)
+            status_lower = fantasy_status.lower()
+            if "out" in status_lower:
+                status_weight = 1.0
+            elif any(term in status_lower for term in ["day-to-day", "questionable", "gtd"]):
+                status_weight = 0.5
+            else:
+                status_weight = 0.75 # default partial weight
+            player_importance = get_player_impact(player_name_upper, team_abbr)
+            # Phase 1: RAPM-enhanced NRTG impact
+            rapm_val = rapm_lookup.get((player_name_upper, team_abbr), 0.0)
+            rapm_adjust = -rapm_val * player_importance * 0.1 * status_weight * matchup_factor # 10% of RAPM as additive
+            # Original impact + RAPM
+            base_adjust = -impact_scale_nrtg * player_importance * status_weight
+            team_nrtg_adj += (base_adjust + rapm_adjust) * rest_multiplier
+            # Offensive ORTG delta from on/off style calc
+            ortg_delta = compute_team_ortg_delta(team_abbr, player_name_upper)
+            team_ortg_adj += ortg_delta * status_weight
+            team_inj_list.append(
+                {
+                    "name": player_name,
+                    "status": fantasy_status,
+                    "injury": full_injury,
+                    "return_date": return_date,
+                    "impact_score": round(player_importance, 2),
+                    "rapm": round(rapm_val, 2), # New: Show RAPM
+                    "status_weight": status_weight,
+                    "ortg_delta": round(ortg_delta, 2),
+                }
+            )
+        # Soft cap the adjustments so they don't explode on weird data
+        team_nrtg_adj = float(np.clip(team_nrtg_adj, -12, 12))
+        team_ortg_adj = float(np.clip(team_ortg_adj, -10, 10))
+        if team_abbr == home_abbr:
+            inj_home = team_inj_list
+            adjust_home_nrtg = team_nrtg_adj
+            adjust_home_ortg = team_ortg_adj
+        elif team_abbr == away_abbr:
+            inj_away = team_inj_list
+            adjust_away_nrtg = team_nrtg_adj
+            adjust_away_ortg = team_ortg_adj
+    return (
+        inj_home,
+        inj_away,
+        adjust_home_nrtg,
+        adjust_away_nrtg,
+        adjust_home_ortg,
+        adjust_away_ortg,
+    )
 def extract_games_from_scoreboard(scoreboard):
-    """Return list of games with home/away abbreviations + status + event_id."""
-    games = []
-    if not scoreboard or "events" not in scoreboard:
-        return games
-    for ev in scoreboard["events"]:
-        try:
-            comp = ev["competitions"][0]
-            t_away = comp["competitors"][0] # away
-            t_home = comp["competitors"][1] # home
-            away_abbr = t_away["team"].get("abbreviation", "")
-            home_abbr = t_home["team"].get("abbreviation", "")
-            # Map 2-letter to 3-letter for consistency
-            away_abbr = ABBREV_MAP.get(away_abbr, away_abbr)
-            home_abbr = ABBREV_MAP.get(home_abbr, home_abbr)
-            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
-            games.append(
-                {
-                    "home": home_abbr,
-                    "away": away_abbr,
-                    "status": status,
-                    "event_id": ev["id"]
-                }
-            )
-        except Exception:
-            continue
-    return games
+    """Return list of games with home/away abbreviations + status + event_id."""
+    games = []
+    if not scoreboard or "events" not in scoreboard:
+        return games
+    for ev in scoreboard["events"]:
+        try:
+            comp = ev["competitions"][0]
+            competitors = comp["competitors"]
+            if len(competitors) != 2:
+                raise ValueError("Unexpected number of competitors")
+           
+            # FIXED: Parse dynamically by homeAway
+            away_abbr, home_abbr = "", ""
+            for t in competitors:
+                ha = t.get("homeAway", None)
+                abbr = t["team"].get("abbreviation", "")
+                if ha == "away":
+                    away_abbr = abbr
+                elif ha == "home":
+                    home_abbr = abbr
+                else:
+                    # Fallback to order if no homeAway (rare)
+                    if away_abbr == "":
+                        away_abbr = abbr
+                    else:
+                        home_abbr = abbr
+           
+            status = ev.get("status", {}).get("type", {}).get("shortDetail", "")
+            games.append(
+                {
+                    "home": home_abbr,
+                    "away": away_abbr,
+                    "status": status,
+                    "event_id": ev["id"] # Preserved for ESPN summary
+                }
+            )
+        except Exception:
+            continue
+    return games
 with tab_ml:
-    # --- Helper for logo + text ---
-    def team_html(team):
-        team_key = ABBREV_MAP.get(team, team)
-        logo = TEAM_LOGOS.get(team_key, "")
-        return (
-            "<span style=\"display:inline-flex; align-items:center; "
-            "gap:6px; vertical-align:middle;\">"
-            f"<img src=\"{logo}\" width=\"20\" "
-            "style=\"border-radius:3px; vertical-align:middle;\" />"
-            f"<span style=\"vertical-align:middle;\">{team}</span></span>"
-        )
-    st.subheader("💵 ML, Spread, & Totals Analyzer")
-    st.caption("Get live projections and edges for moneyline, spread, and totals using team strength and game context")
-    # --- Filters Row (SIDE-BY-SIDE) ---
-    fc1, fc2 = st.columns([1, 1])
-    with fc1:
-        ml_date = st.date_input(
-            "Game Date",
-            value=today,
-            key="ml_date"
-        )
-    with fc2:
-        scoreboard_ml = fetch_scoreboard_cached(ml_date.strftime("%Y%m%d"))
-        games_ml = extract_games_from_scoreboard(scoreboard_ml)
-        if not games_ml:
-            st.warning("No games found for this date.")
-            st.stop()
-        game_options = [f"{g['away']} @ {g['home']}" for g in games_ml]
-        game_choice = st.selectbox(
-            "Matchup",
-            game_options,
-            key="ml_matchup"
-        )
-    # Parse game
-    chosen = games_ml[game_options.index(game_choice)]
-    home = chosen["home"]
-    away = chosen["away"]
-    event_id = chosen["event_id"]
-    # --- Game Header with Logos ---
-    game_header_html = f"""
-    <div style='display:flex; align-items:center; gap:10px;
-                font-size:1.6rem; font-weight:700; margin-top:8px;'>
-        {team_html(away)}
-        <span style='opacity:0.7;'>@</span>
-        {team_html(home)}
-    </div>
-    """.strip()
-    st.markdown(game_header_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    # --- Build Net Strength Model ---
-    season = get_current_season_str()
-    logs_team = load_enhanced_team_logs(season)
-    player_impacts = load_player_impact(season)
-    rapm_df = load_rapm_data(season)  # Phase 1: New RAPM load
-    league_logs_upper = load_league_player_logs_upper(season)
-    if logs_team.empty:
-        st.warning("No data available for this season yet.")
-        st.stop()
-    # Aggregate ratings
-    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
-    team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
-    team_nrtg = team_ortg - team_drtg
-    # Get base values
-    ortg_home = float(team_ortg.get(home, 110.0))
-    drtg_home = float(team_drtg.get(home, 110.0))
-    nrtg_home = float(team_nrtg.get(home, 0.0))
-    ortg_away = float(team_ortg.get(away, 110.0))
-    drtg_away = float(team_drtg.get(away, 110.0))
-    nrtg_away = float(team_nrtg.get(away, 0.0))
-    # Fetch injuries from ESPN and compute adjustments (now with RAPM)
-    summary = get_espn_game_summary(event_id)
-    (
-        inj_home,
-        inj_away,
-        adjust_home_nrtg,
-        adjust_away_nrtg,
-        adjust_home_ortg,
-        adjust_away_ortg,
-    ) = extract_injuries_from_summary(
-        summary,
-        home,
-        away,
-        ml_date,
-        player_impacts=player_impacts,
-        logs_team=logs_team,
-        league_logs_upper=league_logs_upper,
-        rapm_df=rapm_df  # Phase 1: Pass RAPM
-    )
-    # Adjusted NRTG for sides (spread / win prob)
-    nrtg_home_adj = nrtg_home + adjust_home_nrtg
-    nrtg_away_adj = nrtg_away + adjust_away_nrtg
-    nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
-    # Home court advantage
-    hca = 2.7
-    est_margin = round(nrtg_diff_adj + hca, 1) # projected home margin
-    est_spread_home = round(-est_margin, 1) # home spread line: negative if favored
-    # Win probability (logistic on adjusted spread)
-    win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5))
-    win_prob_away = 1 - win_prob_home
-    def prob_to_ml(p):
-        if p <= 0 or p >= 1:
-            return "N/A"
-        dec = 1 / p
-        if dec >= 2:
-            return f"+{int((dec - 1) * 100)}"
-        return f"-{int(100 / (dec - 1))}"
-    ml_home = prob_to_ml(win_prob_home)
-    ml_away = prob_to_ml(win_prob_away)
-    # -----------------------------
-    # Projected Total Points (O/U) – injury-adjusted offense
-    # -----------------------------
-    team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean()
-    poss_home = float(team_poss.get(home, 98.0))
-    poss_away = float(team_poss.get(away, 98.0))
-    proj_possessions = (poss_home + poss_away) / 2.0
-    # Offense adjusted using on/off-style ORTG deltas from injuries
-    ortg_home_total = ortg_home + adjust_home_ortg
-    ortg_away_total = ortg_away + adjust_away_ortg
-    exp_pts_home = ((ortg_home_total + drtg_away) / 2.0) * (proj_possessions / 100.0)
-    exp_pts_away = ((ortg_away_total + drtg_home) / 2.0) * (proj_possessions / 100.0)
-    projected_total = round(exp_pts_home + exp_pts_away, 1)
-    # --- Projected Line Section ---
-    st.markdown("### 📊 Game Predictions")
-    projected_html = textwrap.dedent(f"""
-        <div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;'>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
-                </div>
-            </div>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Projected Total</div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    <span style='font-size:1.2rem; font-weight:700;'>{projected_total:.1f}</span>
-                </div>
-            </div>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
-                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
-                </div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
-                </div>
-            </div>
-            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-                <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
-                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
-                </div>
-                <div style='display:flex; align-items:center; justify-content:center;'>
-                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
-                </div>
-            </div>
-        </div>
-    """).strip()
-    st.markdown(projected_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    # --- Team Strength Model (now after predictions) ---
-    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
-    strength_html = textwrap.dedent(f"""
-        <div style='margin-top:10px;'>
-            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
-                <div style='margin-left:10px;'>
-                    <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
-                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
-                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span>
-                    </div>
-                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
-                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span>
-                    </div>
-                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
-                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span>
-                    </div>
-                </div>
-                <div style='margin-left:10px;'>
-                    <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
-                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
-                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span>
-                    </div>
-                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
-                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span>
-                    </div>
-                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
-                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span>
-                    </div>
-                </div>
-            </div>
-            <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>
-                Net Rating Differential (Adjusted): {nrtg_diff_adj:+.1f} | Projected Margin (w/ HCA): {est_margin:+.1f}
-            </div>
-        </div>
-    """).strip()
-    st.markdown(strength_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    # --- Display Injuries (moved to bottom) ---
-    st.markdown("### 🩹 Injury Adjustments")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**{home} Out ({len(inj_home)} players):**")
-        if inj_home:
-            for i in inj_home:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(
-                    f"- {i['name']} "
-                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, "  # Phase 1: Show RAPM
-                    f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
-                    f"{i['status']}, {i['injury']}, return {ret_str})"
-                )
-        else:
-            st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_home_nrtg:+.1f} | ORTG Adjustment (totals): {adjust_home_ortg:+.1f}*")
-    with col2:
-        st.write(f"**{away} Out ({len(inj_away)} players):**")
-        if inj_away:
-            for i in inj_away:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(
-                    f"- {i['name']} "
-                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, "  # Phase 1: Show RAPM
-                    f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
-                    f"{i['status']}, {i['injury']}, return {ret_str})"
-                )
-        else:
-            st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_away_nrtg:+.1f} | ORTG Adjustment (totals): {adjust_away_ortg:+.1f}*")
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    # -----------------------
-    # Sportsbook Odds Inputs
-    # -----------------------
-    st.markdown("### 📑 Compare With Sportsbook Odds")
-    col1, col2 = st.columns(2)
-    with col1:
-        user_ml_home = st.number_input(f"{home} ML", value=0, step=10)
-        user_spread_home = st.number_input(f"{home} Spread Odds", value=0, step=10)
-    with col2:
-        user_ml_away = st.number_input(f"{away} ML", value=0, step=10)
-        user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
-    # --- Edge Calculation ---
-    def american_to_implied(odds):
-        if odds > 0:
-            return 100 / (odds + 100)
-        elif odds < 0:
-            return abs(odds) / (abs(odds) + 100)
-        else:
-            return None
-    def edge(model_prob, book_odds):
-        book_prob = american_to_implied(book_odds)
-        if book_prob is None:
-            return None
-        return (model_prob - book_prob) * 100
-    edge_home_ml = edge(win_prob_home, user_ml_home)
-    edge_away_ml = edge(win_prob_away, user_ml_away)
-    # --- EV Card Helper ---
-    def edge_line(team, model_prob, fair, book, ev):
-        ev_str = "—" if ev is None else f"{ev:.2f}%"
-        color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
-        return textwrap.dedent(f"""
-            <div style="padding:12px;border:1px solid #333;border-radius:10px;
-                        margin-bottom:12px;background:#1e1e1e;">
-                <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">
-                    {team_html(team)}
-                </div>
-                <div style="font-size:0.9rem;color:#ddd;">
-                    Model Win Prob: {model_prob*100:.1f}% <br>
-                    Fair Odds: {fair} <br>
-                    Sportsbook Odds: {book} <br>
-                    <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
-                </div>
-            </div>
-        """).strip()
-    # --- EV Output ---
-    st.markdown("### 💰 EV Analysis (Moneyline)")
-    st.markdown(
-        edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml),
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml),
-        unsafe_allow_html=True
-    )
+    # --- Helper for logo + text ---
+    def team_html(team):
+        team_key = ABBREV_MAP.get(team, team)
+        logo = TEAM_LOGOS.get(team_key, "")
+        return (
+            "<span style="display:inline-flex; align-items:center; "
+            "gap:6px; vertical-align:middle;">"
+            f"<img src="{logo}" width="20" "
+            "style="border-radius:3px; vertical-align:middle;" />"
+            f"<span style="vertical-align:middle;">{team}</span></span>"
+        )
+    st.subheader("💵 ML, Spread, & Totals Analyzer")
+    st.caption("Get live projections and edges for moneyline, spread, and totals using team strength and game context")
+    # --- Filters Row (SIDE-BY-SIDE) ---
+    fc1, fc2 = st.columns([1, 1])
+    with fc1:
+        ml_date = st.date_input(
+            "Game Date",
+            value=today,
+            key="ml_date"
+        )
+    with fc2:
+        scoreboard_ml = fetch_scoreboard_cached(ml_date.strftime("%Y%m%d"))
+        games_ml = extract_games_from_scoreboard(scoreboard_ml)
+        if not games_ml:
+            st.warning("No games found for this date.")
+            st.stop()
+        game_options = [f"{g['away']} @ {g['home']}" for g in games_ml]
+        game_choice = st.selectbox(
+            "Matchup",
+            game_options,
+            key="ml_matchup"
+        )
+    # Parse game
+    chosen = games_ml[game_options.index(game_choice)]
+    home = chosen["home"]
+    away = chosen["away"]
+    event_id = chosen["event_id"]
+    # --- Game Header with Logos ---
+    game_header_html = f"""
+    <div style='display:flex; align-items:center; gap:10px;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;font-size:1.6rem; font-weight:700; margin-top:8px;'>
+        {team_html(away)}
+        <span style='opacity:0.7;'>@</span>
+        {team_html(home)}
+    </div>
+    """.strip()
+    st.markdown(game_header_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # --- Build Net Strength Model ---
+    season = get_current_season_str()
+    logs_team = load_enhanced_team_logs(season)
+    player_impacts = load_player_impact(season)
+    rapm_df = load_rapm_data(season) # Phase 1: New RAPM load
+    league_logs_upper = load_league_player_logs_upper(season)
+    if logs_team.empty:
+        st.warning("No data available for this season yet.")
+        st.stop()
+    # Phase 2: Train ML models (cached)
+    margin_model = train_margin_model(season)
+    total_model = train_total_model(season)
+    # Aggregate ratings
+    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_nrtg = team_ortg - team_drtg
+    # Get base values
+    ortg_home = float(team_ortg.get(home, 110.0))
+    drtg_home = float(team_drtg.get(home, 110.0))
+    nrtg_home = float(team_nrtg.get(home, 0.0))
+    ortg_away = float(team_ortg.get(away, 110.0))
+    drtg_away = float(team_drtg.get(away, 110.0))
+    nrtg_away = float(team_nrtg.get(away, 0.0))
+    # Compute rest days (Phase 2)
+    rest_home = get_rest_days(home, logs_team, ml_date)
+    rest_away = get_rest_days(away, logs_team, ml_date)
+    rest_diff = rest_home - rest_away
+    # Fetch injuries from ESPN and compute adjustments (now with RAPM)
+    summary = get_espn_game_summary(event_id)
+    (
+        inj_home,
+        inj_away,
+        adjust_home_nrtg,
+        adjust_away_nrtg,
+        adjust_home_ortg,
+        adjust_away_ortg,
+    ) = extract_injuries_from_summary(
+        summary,
+        home,
+        away,
+        ml_date,
+        player_impacts=player_impacts,
+        logs_team=logs_team,
+        league_logs_upper=league_logs_upper,
+        rapm_df=rapm_df # Phase 1: Pass RAPM
+    )
+    # Adjusted NRTG for sides (spread / win prob)
+    nrtg_home_adj = nrtg_home + adjust_home_nrtg
+    nrtg_away_adj = nrtg_away + adjust_away_nrtg
+    nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
+    # Home court advantage
+    hca = 2.7
+    # Base efficiency margin
+    est_margin_base = round(nrtg_diff_adj + hca, 1)
+    # Phase 2: XGBoost ensemble for margin
+    ml_margin = est_margin_base
+    if margin_model is not None:
+        ortg_diff = ortg_home - ortg_away
+        drtg_diff = drtg_home - drtg_away
+        pace_avg = (logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(home, 98.0) +
+                    logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(away, 98.0)) / 2
+        feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
+        xgb_margin = margin_model.predict(feat_vec)[0]
+        ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
+    est_margin = round(ml_margin, 1)
+    est_spread_home = round(-est_margin, 1) # home spread line: negative if favored
+    # Win probability (logistic on adjusted spread)
+    win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5))
+    win_prob_away = 1 - win_prob_home
+    def prob_to_ml(p):
+        if p <= 0 or p >= 1:
+            return "N/A"
+        dec = 1 / p
+        if dec >= 2:
+            return f"+{int((dec - 1) * 100)}"
+        return f"-{int(100 / (dec - 1))}"
+    ml_home = prob_to_ml(win_prob_home)
+    ml_away = prob_to_ml(win_prob_away)
+    # -----------------------------
+    # Projected Total Points (O/U) – injury-adjusted offense
+    # -----------------------------
+    team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean()
+    poss_home = float(team_poss.get(home, 98.0))
+    poss_away = float(team_poss.get(away, 98.0))
+    proj_possessions = (poss_home + poss_away) / 2.0
+    # Offense adjusted using on/off-style ORTG deltas from injuries
+    ortg_home_total = ortg_home + adjust_home_ortg
+    ortg_away_total = ortg_away + adjust_away_ortg
+    exp_pts_home = ((ortg_home_total + drtg_away) / 2.0) * (proj_possessions / 100.0)
+    exp_pts_away = ((ortg_away_total + drtg_home) / 2.0) * (proj_possessions / 100.0)
+    projected_total_base = round(exp_pts_home + exp_pts_away, 1)
+    # Phase 2: XGBoost ensemble for total
+    projected_total = projected_total_base
+    if total_model is not None:
+        total_feat = [ortg_home, ortg_away, drtg_home, drtg_away, proj_possessions, adjust_home_ortg, adjust_away_ortg, rest_diff]
+        xgb_total = total_model.predict(np.array([total_feat]))[0]
+        projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
+    projected_total = round(projected_total, 1)
+    # --- Projected Line Section ---
+    st.markdown("### 📊 Game Predictions")
+    projected_html = textwrap.dedent(f"""
+        <div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;'>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Projected Total</div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    <span style='font-size:1.2rem; font-weight:700;'>{projected_total:.1f}</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
+                </div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
+                </div>
+            </div>
+            <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
+                <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
+                <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
+                    {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
+                </div>
+                <div style='display:flex; align-items:center; justify-content:center;'>
+                    {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
+                </div>
+            </div>
+        </div>
+    """).strip()
+    st.markdown(projected_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # --- Team Strength Model (now after predictions) ---
+    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
+    strength_html = textwrap.dedent(f"""
+        <div style='margin-top:10px;'>
+            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
+                <div style='margin-left:10px;'>
+                    <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span>
+                    </div>
+                </div>
+                <div style='margin-left:10px;'>
+                    <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:2px;'>
+                        <span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span>
+                    </div>
+                    <div style='display:flex; align-items:center; margin-bottom:4px;'>
+                        <span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span>
+                    </div>
+                </div>
+            </div>
+            <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>
+                Net Rating Differential (Adjusted): {nrtg_diff_adj:+.1f} | Projected Margin (w/ HCA): {est_margin:+.1f}
+            </div>
+        </div>
+    """).strip()
+    st.markdown(strength_html, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # --- Display Injuries (moved to bottom) ---
+    st.markdown("### 🩹 Injury Adjustments")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**{home} Out ({len(inj_home)} players):**")
+        if inj_home:
+            for i in inj_home:
+                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                st.write(
+                    f"- {i['name']} "
+                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, " # Phase 1: Show RAPM
+                    f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
+                    f"{i['status']}, {i['injury']}, return {ret_str})"
+                )
+        else:
+            st.write("No key injuries.")
+        st.write(f"*NRTG Adjustment: {adjust_home_nrtg:+.1f} | ORTG Adjustment (totals): {adjust_home_ortg:+.1f}*")
+    with col2:
+        st.write(f"**{away} Out ({len(inj_away)} players):**")
+        if inj_away:
+            for i in inj_away:
+                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                st.write(
+                    f"- {i['name']} "
+                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, " # Phase 1: Show RAPM
+                    f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
+                    f"{i['status']}, {i['injury']}, return {ret_str})"
+                )
+        else:
+            st.write("No key injuries.")
+        st.write(f"*NRTG Adjustment: {adjust_away_nrtg:+.1f} | ORTG Adjustment (totals): {adjust_away_ortg:+.1f}*")
+    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
+    # -----------------------
+    # Sportsbook Odds Inputs
+    # -----------------------
+    st.markdown("### 📑 Compare With Sportsbook Odds")
+    col1, col2 = st.columns(2)
+    with col1:
+        user_ml_home = st.number_input(f"{home} ML", value=0, step=10)
+        user_spread_home = st.number_input(f"{home} Spread Odds", value=0, step=10)
+    with col2:
+        user_ml_away = st.number_input(f"{away} ML", value=0, step=10)
+        user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
+    # --- Edge Calculation ---
+    def american_to_implied(odds):
+        if odds > 0:
+            return 100 / (odds + 100)
+        elif odds < 0:
+            return abs(odds) / (abs(odds) + 100)
+        else:
+            return None
+    def edge(model_prob, book_odds):
+        book_prob = american_to_implied(book_odds)
+        if book_prob is None:
+            return None
+        return (model_prob - book_prob) * 100
+    edge_home_ml = edge(win_prob_home, user_ml_home)
+    edge_away_ml = edge(win_prob_away, user_ml_away)
+    # --- EV Card Helper ---
+    def edge_line(team, model_prob, fair, book, ev):
+        ev_str = "—" if ev is None else f"{ev:.2f}%"
+        color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
+        return textwrap.dedent(f"""
+            <div style="padding:12px;border:1px solid #333;border-radius:10px;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;margin-bottom:12px;background:#1e1e1e;">
+                <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">
+                    {team_html(team)}
+                </div>
+                <div style="font-size:0.9rem;color:#ddd;">
+                    Model Win Prob: {model_prob*100:.1f}% 
+
+                    Fair Odds: {fair} 
+
+                    Sportsbook Odds: {book} 
+
+                    <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
+                </div>
+            </div>
+        """).strip()
+    # --- EV Output ---
+    st.markdown("### 💰 EV Analysis (Moneyline)")
+    st.markdown(
+        edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml),
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml),
+        unsafe_allow_html=True
+    )
