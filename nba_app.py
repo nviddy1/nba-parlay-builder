@@ -2810,19 +2810,7 @@ def load_player_impact(season: str) -> pd.DataFrame:
         "NET_RATING",
         "GP" # Add games played for filtering
     ]]
-@st.cache_data(show_spinner=False)
-def load_rapm_data(season: str) -> pd.DataFrame:
-    """
-    Load RAPM (Regularized Adjusted Plus-Minus) data.
-    For demo: Placeholder with sample data; in production, fetch from external CSV/API (e.g., basketball-reference).
-    """
-    # Sample RAPM data (replace with real fetch, e.g., pd.read_csv('rapm_2025.csv'))
-    sample_data = {
-        'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
-        'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
-        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2] # Example values; positive = net positive impact
-    }
-    return pd.DataFrame(sample_data)
+
 @st.cache_data(show_spinner=False)
 def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     """
@@ -2877,15 +2865,7 @@ def extract_injuries_from_summary(
     else:
         impact_lookup = {}
         gp_lookup = {}
-    # RAPM lookup (Phase 1: Advanced player impact)
-    if rapm_df is not None and not rapm_df.empty:
-        rapm_lookup = (
-            rapm_df
-            .set_index(["PLAYER_NAME_UPPER", "TEAM_ABBREVIATION"])["RAPM"]
-            .to_dict()
-        )
-    else:
-        rapm_lookup = {}
+   
     # NRTG scaling so a full starter-level absence ~1.5 NRTG
     impact_scale_nrtg = 1.5
     # Phase 1: Simple matchup factor (1.0 neutral; adjust based on opp weakness, e.g., 1.2 vs poor D)
