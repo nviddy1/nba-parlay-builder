@@ -2545,7 +2545,13 @@ import pandas as pd
 import requests
 import datetime
 import streamlit as st
-import xgboost as xgb
+try:
+    import xgboost as xgb
+    XGB_AVAILABLE = True
+except ImportError:
+    xgb = None
+    XGB_AVAILABLE = False
+    st.warning("xgboost not installed. Falling back to base efficiency model. Install via `pip install xgboost` for ML enhancements.")
 from nba_api.stats.endpoints import leaguegamelog, leaguedashplayerstats
 # 2-letter to 3-letter mapping for logos and abbrevs
 ABBREV_MAP = {
@@ -2634,6 +2640,9 @@ def get_rest_days(team: str, logs: pd.DataFrame, game_date: datetime.date) -> in
 @st.cache_data(show_spinner=False)
 def train_margin_model(season: str):
     """Train XGBoost model for projected home margin on historical data."""
+    global XGB_AVAILABLE
+    if not XGB_AVAILABLE:
+        return None
     prev_season = f"{int(season.split('-')[0]) - 1}-{season.split('-')[1]}"
     logs = load_enhanced_team_logs(prev_season)
     if logs.empty:
@@ -2687,6 +2696,9 @@ def train_margin_model(season: str):
 @st.cache_data(show_spinner=False)
 def train_total_model(season: str):
     """Train XGBoost model for projected total points on historical data."""
+    global XGB_AVAILABLE
+    if not XGB_AVAILABLE:
+        return None
     prev_season = f"{int(season.split('-')[0]) - 1}-{season.split('-')[1]}"
     logs = load_enhanced_team_logs(prev_season)
     if logs.empty:
