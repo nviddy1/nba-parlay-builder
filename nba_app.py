@@ -2718,14 +2718,14 @@ def extract_injuries_from_summary(
     impact_scale_nrtg = 1.5
     # Pre-group team logs for quick access
     team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
-    total_team_games = logs_team["GAME_ID"].nunique() if not logs_team.empty else 0
-    min_games_threshold = max(1, int(0.1 * total_team_games))  # At least 10% of games played
-    def get_player_impact(name_upper: str) -> float:
-        """Look up impact score by name, fallback to 1.0 if unknown."""
+    def get_player_impact(name_upper: str, team_abbr: str) -> float:
+        """Look up impact score by name, fallback to 1.0 if unknown. Exclude if <10% team games."""
         if not impact_lookup:
             return 1.0
-        # Only apply impact if player has played at least 10% of games
         gp = gp_lookup.get(name_upper, 0)
+        team_games = team_grouped.get(team_abbr, pd.DataFrame())
+        team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
+        min_games_threshold = max(1, int(0.1 * team_total_games))
         if gp < min_games_threshold:
             return 0.0  # No impact if insufficient games
         return float(impact_lookup.get(name_upper, 1.0))
@@ -2737,9 +2737,11 @@ def extract_injuries_from_summary(
         """
         if logs_team.empty or league_logs_upper.empty:
             return 0.0
-        if team_abbr not in team_grouped:
+        team_games = team_grouped.get(team_abbr, pd.DataFrame())
+        if team_games.empty:
             return 0.0
-        team_games = team_grouped[team_abbr]
+        team_total_games = team_games["GAME_ID"].nunique()
+        min_games_threshold = max(1, int(0.1 * team_total_games))
         plog = league_logs_upper[
             (league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) &
             (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)
@@ -2748,8 +2750,8 @@ def extract_injuries_from_summary(
             return 0.0
         games_with = set(plog["GAME_ID"].unique())
         n_with = len(games_with)
-        if n_with == 0 or n_with < min_games_threshold:
-            return 0.0  # Skip if no games or below 10% threshold
+        if n_with < min_games_threshold:
+            return 0.0  # Skip if below 10% threshold
         with_df = team_games[team_games["GAME_ID"].isin(games_with)]
         without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
         n_without = without_df["GAME_ID"].nunique()
@@ -2798,7 +2800,7 @@ def extract_injuries_from_summary(
                 status_weight = 0.5
             else:
                 status_weight = 0.75 # default partial weight
-            player_importance = get_player_impact(player_name_upper)
+            player_importance = get_player_impact(player_name_upper, team_abbr)
             # NRTG impact: always negative for missing rotation-quality players
             team_nrtg_adj += -impact_scale_nrtg * player_importance * status_weight
             # Offensive ORTG delta from on/off style calc
