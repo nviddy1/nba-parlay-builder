@@ -2855,15 +2855,31 @@ def load_player_impact(season: str) -> pd.DataFrame:
 def load_rapm_data(season: str) -> pd.DataFrame:
     """
     Load RAPM (Regularized Adjusted Plus-Minus) data.
-    For demo: Placeholder with sample data; in production, fetch from external CSV/API (e.g., basketball-reference).
+    Tries B-R URL (may fail for future seasons); falls back to sample.
+    In prod, use GitHub raw CSV from e.g., https://github.com/tonyelhabr/nba-rapm (run their script for CSV).
     """
-    # Sample RAPM data (replace with real fetch, e.g., pd.read_csv('rapm_2025.csv'))
-    sample_data = {
-        'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
-        'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
-        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2] # Example values; positive = net positive impact
-    }
-    return pd.DataFrame(sample_data)
+    # Attempt real load (B-R doesn't have direct CSV; use as template)
+    year = season[:4]
+    url = f"https://www.basketball-reference.com/leagues/NBA_{year}_rapm.csv"  # Won't exist; swap with real, e.g., "https://raw.githubusercontent.com/user/repo/main/rapm_{year-1}.csv"
+    try:
+        df = pd.read_csv(url)
+        # Parse to required columns (assume standard B-R/GitHub format: 'Player', 'Tm', 'RAPM')
+        df = df.dropna(subset=['Player', 'Tm', 'RAPM'])  # Clean NaNs
+        df['PLAYER_NAME_UPPER'] = df['Player'].str.upper().str.replace(r'\*|\#|\$', '', regex=True)  # Strip footnotes
+        df['TEAM_ABBREVIATION'] = df['Tm'].str.upper()  # e.g., 'LAL' or 'TOT' → filter TOT if needed
+        df['RAPM'] = pd.to_numeric(df['RAPM'], errors='coerce').fillna(0)  # Ensure numeric
+        df = df[['PLAYER_NAME_UPPER', 'TEAM_ABBREVIATION', 'RAPM']]  # Select only needed
+        st.info(f"Loaded {len(df)} real RAPM rows for {season}.")
+        return df
+    except Exception as e:
+        st.warning(f"RAPM URL failed ({e}); using sample data. Upload CSV or fix URL for real values.")
+        # Your existing sample as fallback
+        sample_data = {
+            'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
+            'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
+            'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2]
+        }
+        return pd.DataFrame(sample_data)
 @st.cache_data(show_spinner=False)
 def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     """
