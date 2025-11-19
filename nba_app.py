@@ -2553,12 +2553,16 @@ ABBREV_MAP = {
     "UT": "UTA",
     "SA": "SAS",
     "LA": "LAL",
+    "NY": "NYK",
+    "WSH": "WAS",
     # Pass-throughs for already-canonical codes, optional but harmless:
     "GSW": "GSW",
     "NOP": "NOP",
     "UTA": "UTA",
     "SAS": "SAS",
     "LAL": "LAL",
+    "NYK": "NYK",
+    "WAS": "WAS",
 }
 @st.cache_data(show_spinner=False)
 def load_enhanced_team_logs(season: str) -> pd.DataFrame:
@@ -2698,7 +2702,7 @@ def extract_injuries_from_summary(
     adjust_away_ortg = 0.0
     injuries_top = summary.get("injuries", [])
     # Map API abbrevs to app abbrevs
-    abbr_map = {"GS": "GSW"} # extend if needed
+    abbr_map = ABBREV_MAP
     # Impact lookup from advanced stats
     if player_impacts is not None and not player_impacts.empty:
         impact_lookup = (
