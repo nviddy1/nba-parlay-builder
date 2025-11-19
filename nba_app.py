@@ -2545,6 +2545,7 @@ import pandas as pd
 import requests
 import datetime
 import streamlit as st
+import xgboost as xgb
 from nba_api.stats.endpoints import leaguegamelog, leaguedashplayerstats
 # 2-letter to 3-letter mapping for logos and abbrevs
 ABBREV_MAP = {
@@ -2578,6 +2579,7 @@ def load_enhanced_team_logs(season: str) -> pd.DataFrame:
         return pd.DataFrame()
     if df.empty:
         return df
+    df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'], errors='coerce')
     # Ensure numeric columns
     num_cols = ['FGA', 'FTA', 'OREB', 'TOV', 'PTS']
     for col in num_cols:
@@ -2618,6 +2620,120 @@ def load_enhanced_team_logs(season: str) -> pd.DataFrame:
     df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
     df['nrtg'] = df['ortg'] - df['drtg']
     return df
+def get_rest_days(team: str, logs: pd.DataFrame, game_date: datetime.date) -> int:
+    """Compute rest days for a team before a given game date."""
+    team_games = logs[logs['TEAM_ABBREVIATION'] == team].copy()
+    if team_games.empty:
+        return 0
+    past_games = team_games[team_games['GAME_DATE'] < pd.Timestamp(game_date)]
+    if past_games.empty:
+        return 99  # No prior games
+    last_game_date = past_games['GAME_DATE'].max().date()
+    rest_days = (game_date - last_game_date).days
+    return rest_days
+@st.cache_data(show_spinner=False)
+def train_margin_model(season: str):
+    """Train XGBoost model for projected home margin on historical data."""
+    prev_season = f"{int(season.split('-')[0]) - 1}-{season.split('-')[1]}"
+    logs = load_enhanced_team_logs(prev_season)
+    if logs.empty:
+        return None
+    # Compute season averages (simplified; use full season for demo - in prod, use rolling pre-game)
+    team_ortg = logs.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_poss = logs.groupby("TEAM_ABBREVIATION")["poss"].mean()
+    # Group by game
+    games = logs.groupby('GAME_ID')
+    features_list = []
+    margins = []
+    hca_val = 2.7
+    for gid, group in games:
+        if len(group) != 2:
+            continue
+        teams = group['TEAM_ABBREVIATION'].unique()
+        if len(teams) != 2:
+            continue
+        matchup_home = group.iloc[0]['MATCHUP']
+        if 'vs' in matchup_home:
+            home = group.iloc[0]['TEAM_ABBREVIATION']
+            away = group.iloc[1]['TEAM_ABBREVIATION']
+        else:
+            home = group.iloc[1]['TEAM_ABBREVIATION']
+            away = group.iloc[0]['TEAM_ABBREVIATION']
+        home_row = group[group['TEAM_ABBREVIATION'] == home].iloc[0]
+        away_row = group[group['TEAM_ABBREVIATION'] == away].iloc[0]
+        actual_margin = home_row['PTS'] - away_row['PTS']
+        game_date = home_row['GAME_DATE'].date()
+        rest_home = get_rest_days(home, logs, game_date)
+        rest_away = get_rest_days(away, logs, game_date)
+        rest_d = rest_home - rest_away
+        ortg_home_pre = float(team_ortg.get(home, 110.0))
+        ortg_away_pre = float(team_ortg.get(away, 110.0))
+        drtg_home_pre = float(team_drtg.get(home, 110.0))
+        drtg_away_pre = float(team_drtg.get(away, 110.0))
+        poss_avg = float((team_poss.get(home, 98.0) + team_poss.get(away, 98.0)) / 2)
+        ortg_diff = ortg_home_pre - ortg_away_pre
+        drtg_diff = drtg_home_pre - drtg_away_pre
+        features = [ortg_diff, drtg_diff, poss_avg, 0.0, 0.0, hca_val, rest_d]
+        features_list.append(features)
+        margins.append(actual_margin)
+    if len(margins) < 50:
+        return None
+    X = np.array(features_list)
+    y = np.array(margins)
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+    model.fit(X, y)
+    return model
+@st.cache_data(show_spinner=False)
+def train_total_model(season: str):
+    """Train XGBoost model for projected total points on historical data."""
+    prev_season = f"{int(season.split('-')[0]) - 1}-{season.split('-')[1]}"
+    logs = load_enhanced_team_logs(prev_season)
+    if logs.empty:
+        return None
+    # Compute season averages (simplified; use full season for demo - in prod, use rolling pre-game)
+    team_ortg = logs.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = logs.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_poss = logs.groupby("TEAM_ABBREVIATION")["poss"].mean()
+    # Group by game
+    games = logs.groupby('GAME_ID')
+    features_list = []
+    totals = []
+    for gid, group in games:
+        if len(group) != 2:
+            continue
+        teams = group['TEAM_ABBREVIATION'].unique()
+        if len(teams) != 2:
+            continue
+        matchup_home = group.iloc[0]['MATCHUP']
+        if 'vs' in matchup_home:
+            home = group.iloc[0]['TEAM_ABBREVIATION']
+            away = group.iloc[1]['TEAM_ABBREVIATION']
+        else:
+            home = group.iloc[1]['TEAM_ABBREVIATION']
+            away = group.iloc[0]['TEAM_ABBREVIATION']
+        home_row = group[group['TEAM_ABBREVIATION'] == home].iloc[0]
+        away_row = group[group['TEAM_ABBREVIATION'] == away].iloc[0]
+        actual_total = home_row['PTS'] + away_row['PTS']
+        game_date = home_row['GAME_DATE'].date()
+        rest_home = get_rest_days(home, logs, game_date)
+        rest_away = get_rest_days(away, logs, game_date)
+        rest_d = rest_home - rest_away
+        ortg_home_pre = float(team_ortg.get(home, 110.0))
+        ortg_away_pre = float(team_ortg.get(away, 110.0))
+        drtg_home_pre = float(team_drtg.get(home, 110.0))
+        drtg_away_pre = float(team_drtg.get(away, 110.0))
+        poss_avg = float((team_poss.get(home, 98.0) + team_poss.get(away, 98.0)) / 2)
+        features = [ortg_home_pre, ortg_away_pre, drtg_home_pre, drtg_away_pre, poss_avg, 0.0, 0.0, rest_d]
+        features_list.append(features)
+        totals.append(actual_total)
+    if len(totals) < 50:
+        return None
+    X = np.array(features_list)
+    y = np.array(totals)
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+    model.fit(X, y)
+    return model
 @st.cache_data(show_spinner=False)
 def get_espn_game_summary(event_id: str) -> dict:
     """Fetch ESPN game summary including injuries."""
@@ -2663,7 +2779,7 @@ def load_player_impact(season: str) -> pd.DataFrame:
         "IMPACT_SCORE",
         "MIN",
         "NET_RATING",
-        "GP"  # Add games played for filtering
+        "GP" # Add games played for filtering
     ]]
 @st.cache_data(show_spinner=False)
 def load_rapm_data(season: str) -> pd.DataFrame:
@@ -2675,7 +2791,7 @@ def load_rapm_data(season: str) -> pd.DataFrame:
     sample_data = {
         'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
         'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
-        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2]  # Example values; positive = net positive impact
+        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2] # Example values; positive = net positive impact
     }
     return pd.DataFrame(sample_data)
 @st.cache_data(show_spinner=False)
@@ -2744,8 +2860,8 @@ def extract_injuries_from_summary(
     # NRTG scaling so a full starter-level absence ~1.5 NRTG
     impact_scale_nrtg = 1.5
     # Phase 1: Simple matchup factor (1.0 neutral; adjust based on opp weakness, e.g., 1.2 vs poor D)
-    matchup_factor_home = 1.0  # Vs. away team; extend with positional defense data
-    matchup_factor_away = 1.0  # Vs. home team
+    matchup_factor_home = 1.0 # Vs. away team; extend with positional defense data
+    matchup_factor_away = 1.0 # Vs. home team
     # Pre-group team logs for quick access
     team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
     def get_player_impact(name_upper: str, team_abbr: str) -> float:
@@ -2757,7 +2873,7 @@ def extract_injuries_from_summary(
         team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
         min_games_threshold = max(1, int(0.1 * team_total_games))
         if gp < min_games_threshold:
-            return 0.0  # No impact if insufficient games
+            return 0.0 # No impact if insufficient games
         return float(impact_lookup.get(name_upper, 1.0))
     def compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
         """
@@ -2781,7 +2897,7 @@ def extract_injuries_from_summary(
         games_with = set(plog["GAME_ID"].unique())
         n_with = len(games_with)
         if n_with < min_games_threshold:
-            return 0.0  # Skip if below 10% threshold
+            return 0.0 # Skip if below 10% threshold
         with_df = team_games[team_games["GAME_ID"].isin(games_with)]
         without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
         n_without = without_df["GAME_ID"].nunique()
@@ -2803,7 +2919,7 @@ def extract_injuries_from_summary(
         team_nrtg_adj = 0.0
         team_ortg_adj = 0.0
         # Phase 1: Situational multipliers (e.g., rest/travel; fetch from ESPN summary or add input)
-        rest_multiplier = 1.0  # E.g., 0.95 if on back-to-back
+        rest_multiplier = 1.0 # E.g., 0.95 if on back-to-back
         matchup_factor = matchup_factor_home if team_abbr == home_abbr else matchup_factor_away
         for inj in team_inj_item.get("injuries", []):
             athlete = inj["athlete"]
@@ -2836,7 +2952,7 @@ def extract_injuries_from_summary(
             player_importance = get_player_impact(player_name_upper, team_abbr)
             # Phase 1: RAPM-enhanced NRTG impact
             rapm_val = rapm_lookup.get((player_name_upper, team_abbr), 0.0)
-            rapm_adjust = -rapm_val * player_importance * 0.1 * status_weight * matchup_factor  # 10% of RAPM as additive
+            rapm_adjust = -rapm_val * player_importance * 0.1 * status_weight * matchup_factor # 10% of RAPM as additive
             # Original impact + RAPM
             base_adjust = -impact_scale_nrtg * player_importance * status_weight
             team_nrtg_adj += (base_adjust + rapm_adjust) * rest_multiplier
@@ -2850,7 +2966,7 @@ def extract_injuries_from_summary(
                     "injury": full_injury,
                     "return_date": return_date,
                     "impact_score": round(player_importance, 2),
-                    "rapm": round(rapm_val, 2),  # New: Show RAPM
+                    "rapm": round(rapm_val, 2), # New: Show RAPM
                     "status_weight": status_weight,
                     "ortg_delta": round(ortg_delta, 2),
                 }
@@ -2955,11 +3071,14 @@ with tab_ml:
     season = get_current_season_str()
     logs_team = load_enhanced_team_logs(season)
     player_impacts = load_player_impact(season)
-    rapm_df = load_rapm_data(season)  # Phase 1: New RAPM load
+    rapm_df = load_rapm_data(season) # Phase 1: New RAPM load
     league_logs_upper = load_league_player_logs_upper(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
         st.stop()
+    # Phase 2: Train ML models (cached)
+    margin_model = train_margin_model(season)
+    total_model = train_total_model(season)
     # Aggregate ratings
     team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
     team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
@@ -2971,6 +3090,10 @@ with tab_ml:
     ortg_away = float(team_ortg.get(away, 110.0))
     drtg_away = float(team_drtg.get(away, 110.0))
     nrtg_away = float(team_nrtg.get(away, 0.0))
+    # Compute rest days (Phase 2)
+    rest_home = get_rest_days(home, logs_team, ml_date)
+    rest_away = get_rest_days(away, logs_team, ml_date)
+    rest_diff = rest_home - rest_away
     # Fetch injuries from ESPN and compute adjustments (now with RAPM)
     summary = get_espn_game_summary(event_id)
     (
@@ -2988,7 +3111,7 @@ with tab_ml:
         player_impacts=player_impacts,
         logs_team=logs_team,
         league_logs_upper=league_logs_upper,
-        rapm_df=rapm_df  # Phase 1: Pass RAPM
+        rapm_df=rapm_df # Phase 1: Pass RAPM
     )
     # Adjusted NRTG for sides (spread / win prob)
     nrtg_home_adj = nrtg_home + adjust_home_nrtg
@@ -2996,7 +3119,19 @@ with tab_ml:
     nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
     # Home court advantage
     hca = 2.7
-    est_margin = round(nrtg_diff_adj + hca, 1) # projected home margin
+    # Base efficiency margin
+    est_margin_base = round(nrtg_diff_adj + hca, 1)
+    # Phase 2: XGBoost ensemble for margin
+    ml_margin = est_margin_base
+    if margin_model is not None:
+        ortg_diff = ortg_home - ortg_away
+        drtg_diff = drtg_home - drtg_away
+        pace_avg = (logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(home, 98.0) +
+                    logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(away, 98.0)) / 2
+        feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
+        xgb_margin = margin_model.predict(feat_vec)[0]
+        ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
+    est_margin = round(ml_margin, 1)
     est_spread_home = round(-est_margin, 1) # home spread line: negative if favored
     # Win probability (logistic on adjusted spread)
     win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5))
@@ -3022,7 +3157,14 @@ with tab_ml:
     ortg_away_total = ortg_away + adjust_away_ortg
     exp_pts_home = ((ortg_home_total + drtg_away) / 2.0) * (proj_possessions / 100.0)
     exp_pts_away = ((ortg_away_total + drtg_home) / 2.0) * (proj_possessions / 100.0)
-    projected_total = round(exp_pts_home + exp_pts_away, 1)
+    projected_total_base = round(exp_pts_home + exp_pts_away, 1)
+    # Phase 2: XGBoost ensemble for total
+    projected_total = projected_total_base
+    if total_model is not None:
+        total_feat = [ortg_home, ortg_away, drtg_home, drtg_away, proj_possessions, adjust_home_ortg, adjust_away_ortg, rest_diff]
+        xgb_total = total_model.predict(np.array([total_feat]))[0]
+        projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
+    projected_total = round(projected_total, 1)
     # --- Projected Line Section ---
     st.markdown("### 📊 Game Predictions")
     projected_html = textwrap.dedent(f"""
@@ -3108,7 +3250,7 @@ with tab_ml:
                 ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
                 st.write(
                     f"- {i['name']} "
-                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, "  # Phase 1: Show RAPM
+                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, " # Phase 1: Show RAPM
                     f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
                     f"{i['status']}, {i['injury']}, return {ret_str})"
                 )
@@ -3122,7 +3264,7 @@ with tab_ml:
                 ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
                 st.write(
                     f"- {i['name']} "
-                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, "  # Phase 1: Show RAPM
+                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, " # Phase 1: Show RAPM
                     f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
                     f"{i['status']}, {i['injury']}, return {ret_str})"
                 )
