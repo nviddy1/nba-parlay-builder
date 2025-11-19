@@ -2666,6 +2666,19 @@ def load_player_impact(season: str) -> pd.DataFrame:
         "GP"  # Add games played for filtering
     ]]
 @st.cache_data(show_spinner=False)
+def load_rapm_data(season: str) -> pd.DataFrame:
+    """
+    Load RAPM (Regularized Adjusted Plus-Minus) data.
+    For demo: Placeholder with sample data; in production, fetch from external CSV/API (e.g., basketball-reference).
+    """
+    # Sample RAPM data (replace with real fetch, e.g., pd.read_csv('rapm_2025.csv'))
+    sample_data = {
+        'PLAYER_NAME_UPPER': ['JULIAN STRAWTHER', 'CHRISTIAN BRAUN', 'KARLO MATKOVIC', 'JORDAN POOLE', 'DEJOUNTE MURRAY'],
+        'TEAM_ABBREVIATION': ['DEN', 'DEN', 'NOP', 'NOP', 'NOP'],
+        'RAPM': [2.1, 1.8, -0.5, 0.9, 3.2]  # Example values; positive = net positive impact
+    }
+    return pd.DataFrame(sample_data)
+@st.cache_data(show_spinner=False)
 def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     """
     Wrapper around get_league_player_logs(season) that adds PLAYER_NAME_UPPER.
@@ -2687,11 +2700,12 @@ def extract_injuries_from_summary(
     game_date: datetime.date,
     player_impacts: pd.DataFrame | None,
     logs_team: pd.DataFrame,
-    league_logs_upper: pd.DataFrame
+    league_logs_upper: pd.DataFrame,
+    rapm_df: pd.DataFrame | None = None
 ) -> tuple:
     """
     Extract out players for home and away from ESPN summary and compute:
-      - NRTG adjustments based on player impact (minutes + status)
+      - NRTG adjustments based on player impact (minutes + status) + RAPM * matchup
       - Offensive ORTG adjustments based on team ORTG with vs without player
     """
     inj_home = []
@@ -2718,8 +2732,20 @@ def extract_injuries_from_summary(
     else:
         impact_lookup = {}
         gp_lookup = {}
+    # RAPM lookup (Phase 1: Advanced player impact)
+    if rapm_df is not None and not rapm_df.empty:
+        rapm_lookup = (
+            rapm_df
+            .set_index(["PLAYER_NAME_UPPER", "TEAM_ABBREVIATION"])["RAPM"]
+            .to_dict()
+        )
+    else:
+        rapm_lookup = {}
     # NRTG scaling so a full starter-level absence ~1.5 NRTG
     impact_scale_nrtg = 1.5
+    # Phase 1: Simple matchup factor (1.0 neutral; adjust based on opp weakness, e.g., 1.2 vs poor D)
+    matchup_factor_home = 1.0  # Vs. away team; extend with positional defense data
+    matchup_factor_away = 1.0  # Vs. home team
     # Pre-group team logs for quick access
     team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
     def get_player_impact(name_upper: str, team_abbr: str) -> float:
@@ -2776,6 +2802,9 @@ def extract_injuries_from_summary(
         team_inj_list = []
         team_nrtg_adj = 0.0
         team_ortg_adj = 0.0
+        # Phase 1: Situational multipliers (e.g., rest/travel; fetch from ESPN summary or add input)
+        rest_multiplier = 1.0  # E.g., 0.95 if on back-to-back
+        matchup_factor = matchup_factor_home if team_abbr == home_abbr else matchup_factor_away
         for inj in team_inj_item.get("injuries", []):
             athlete = inj["athlete"]
             player_name = athlete["displayName"]
@@ -2805,8 +2834,12 @@ def extract_injuries_from_summary(
             else:
                 status_weight = 0.75 # default partial weight
             player_importance = get_player_impact(player_name_upper, team_abbr)
-            # NRTG impact: always negative for missing rotation-quality players
-            team_nrtg_adj += -impact_scale_nrtg * player_importance * status_weight
+            # Phase 1: RAPM-enhanced NRTG impact
+            rapm_val = rapm_lookup.get((player_name_upper, team_abbr), 0.0)
+            rapm_adjust = -rapm_val * player_importance * 0.1 * status_weight * matchup_factor  # 10% of RAPM as additive
+            # Original impact + RAPM
+            base_adjust = -impact_scale_nrtg * player_importance * status_weight
+            team_nrtg_adj += (base_adjust + rapm_adjust) * rest_multiplier
             # Offensive ORTG delta from on/off style calc
             ortg_delta = compute_team_ortg_delta(team_abbr, player_name_upper)
             team_ortg_adj += ortg_delta * status_weight
@@ -2817,6 +2850,7 @@ def extract_injuries_from_summary(
                     "injury": full_injury,
                     "return_date": return_date,
                     "impact_score": round(player_importance, 2),
+                    "rapm": round(rapm_val, 2),  # New: Show RAPM
                     "status_weight": status_weight,
                     "ortg_delta": round(ortg_delta, 2),
                 }
@@ -2921,6 +2955,7 @@ with tab_ml:
     season = get_current_season_str()
     logs_team = load_enhanced_team_logs(season)
     player_impacts = load_player_impact(season)
+    rapm_df = load_rapm_data(season)  # Phase 1: New RAPM load
     league_logs_upper = load_league_player_logs_upper(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
@@ -2936,7 +2971,7 @@ with tab_ml:
     ortg_away = float(team_ortg.get(away, 110.0))
     drtg_away = float(team_drtg.get(away, 110.0))
     nrtg_away = float(team_nrtg.get(away, 0.0))
-    # Fetch injuries from ESPN and compute adjustments
+    # Fetch injuries from ESPN and compute adjustments (now with RAPM)
     summary = get_espn_game_summary(event_id)
     (
         inj_home,
@@ -2952,7 +2987,8 @@ with tab_ml:
         ml_date,
         player_impacts=player_impacts,
         logs_team=logs_team,
-        league_logs_upper=league_logs_upper
+        league_logs_upper=league_logs_upper,
+        rapm_df=rapm_df  # Phase 1: Pass RAPM
     )
     # Adjusted NRTG for sides (spread / win prob)
     nrtg_home_adj = nrtg_home + adjust_home_nrtg
@@ -3072,7 +3108,7 @@ with tab_ml:
                 ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
                 st.write(
                     f"- {i['name']} "
-                    f"(impact {i.get('impact_score', 1.0):.2f}, "
+                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, "  # Phase 1: Show RAPM
                     f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
                     f"{i['status']}, {i['injury']}, return {ret_str})"
                 )
@@ -3086,7 +3122,7 @@ with tab_ml:
                 ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
                 st.write(
                     f"- {i['name']} "
-                    f"(impact {i.get('impact_score', 1.0):.2f}, "
+                    f"(impact {i.get('impact_score', 1.0):.2f}, RAPM {i.get('rapm', 0.0):.2f}, "  # Phase 1: Show RAPM
                     f"ΔORTG {i.get('ortg_delta', 0.0):+.1f}, "
                     f"{i['status']}, {i['injury']}, return {ret_str})"
                 )
