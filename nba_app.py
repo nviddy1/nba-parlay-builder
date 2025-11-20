@@ -3120,8 +3120,8 @@ with tab_ml:
         )
     # Parse game
     chosen = games_ml[game_options.index(game_choice)]
-    home = chosen["home"]
-    away = chosen["away"]
+    home = ABBREV_MAP.get(chosen["home"], chosen["home"])
+    away = ABBREV_MAP.get(chosen["away"], chosen["away"])
     event_id = chosen["event_id"]
     # --- Game Header with Logos ---
     game_header_html = f"""
