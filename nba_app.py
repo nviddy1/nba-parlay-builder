@@ -63,14 +63,12 @@ def render_espn_banner(scoreboard):
     st.markdown(
         """
         <style>
-
         /* --- Title --- */
         h1, .main-title {
             font-size: 50px !important;
             font-weight: 900 !important;
             margin-bottom: 6px !important;
         }
-
         /* --- Banner container --- */
         .espn-banner-container {
             display: flex;
@@ -80,39 +78,33 @@ def render_espn_banner(scoreboard):
             gap: 10px !important;
             border-bottom: 1px solid #333;
         }
-
         /* --- COMPACT-MEDIUM CARD (slightly wider now) --- */
         .espn-game-card {
             flex: 0 0 auto;
             display: flex;
             flex-direction: column;
             align-items: center;
-
             background: #1e1e1e;
             border-radius: 8px !important;
             border: 1px solid #333;
-
             padding: 8px 12px !important;
-            min-width: 170px !important;    /* increased from 150 */
+            min-width: 170px !important; /* increased from 150 */
             max-width: 170px !important;
-
             gap: 4px !important;
         }
-
         /* --- Time / TV smaller (2 sizes down) --- */
         .espn-time {
-            font-size: 11px !important;     /* was 13 */
+            font-size: 11px !important; /* was 13 */
             color: #ccc;
             text-align: center;
             margin-bottom: 4px !important;
             line-height: 1.1;
         }
         .espn-time .tv {
-            font-size: 9px !important;      /* was 11 → bumped down */
+            font-size: 9px !important; /* was 11 → bumped down */
             color: #ff9900;
             margin-top: 1px;
         }
-
         .espn-matchup {
             display: flex;
             align-items: center;
@@ -120,14 +112,12 @@ def render_espn_banner(scoreboard):
             width: 100%;
             margin-bottom: 2px !important;
         }
-
         /* --- Logos --- */
         .espn-team img {
             height: 26px !important;
             width: 26px !important;
             margin-bottom: 2px !important;
         }
-
         .espn-team {
             flex: 1;
             display: flex;
@@ -135,54 +125,68 @@ def render_espn_banner(scoreboard):
             align-items: center;
             gap: 1px !important;
         }
-
         .espn-team-abbr {
             font-size: 14px !important;
             font-weight: 700 !important;
             margin-bottom: 1px !important;
         }
-
         /* --- Record 1 size bigger --- */
         .espn-record {
-            font-size: 11px !important;    /* was 10 */
+            font-size: 11px !important; /* was 10 */
             color: #888;
             line-height: 1.05;
         }
-
         .espn-at {
             font-size: 14px !important;
             font-weight: 700 !important;
             margin: 0 6px !important;
             white-space: nowrap;
         }
-
         </style>
         """,
         unsafe_allow_html=True,
     )
-
     html = '<div class="espn-banner-container">'
-    
+   
     events = scoreboard["events"]
     for i, game in enumerate(events):
         try:
             comp = game["competitions"][0]
             status = game["status"]["type"]["shortDetail"]
-            t1 = comp["competitors"][0]  # Away
-            t2 = comp["competitors"][1]  # Home
-           
-            def fmt_team(team):
-                team_dict = team["team"]
+            
+            # FIXED: Parse competitors dynamically by homeAway
+            competitors = comp["competitors"]
+            if len(competitors) != 2:
+                raise ValueError("Unexpected number of competitors")
+            
+            away_team, home_team = None, None
+            for t in competitors:
+                ha = t.get("homeAway", None)
+                team_dict = t["team"]
                 abbr = team_dict.get("abbreviation", "TBD")
                 logo = team_dict.get("logo", f"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{abbr.lower()}.png")
                 record = ""
-                if team.get("records") and len(team["records"]) > 0:
-                    record = team["records"][0].get("summary", "")
-                return abbr, logo, record
-           
-            away_abbr, away_logo, away_record = fmt_team(t1)
-            home_abbr, home_logo, home_record = fmt_team(t2)
-           
+                if t.get("records") and len(t["records"]) > 0:
+                    record = t["records"][0].get("summary", "")
+                team_info = (abbr, logo, record)
+                
+                if ha == "away":
+                    away_team = team_info
+                elif ha == "home":
+                    home_team = team_info
+                else:
+                    # Fallback to order if no homeAway (rare)
+                    if away_team is None:
+                        away_team = team_info
+                    else:
+                        home_team = team_info
+            
+            if away_team is None or home_team is None:
+                raise ValueError("Could not determine home/away")
+            
+            away_abbr, away_logo, away_record = away_team
+            home_abbr, home_logo, home_record = home_team
+          
             # Time parsing with fallback
             try:
                 start_time_str = game["date"].replace("Z", "+00:00")
@@ -191,11 +195,11 @@ def render_espn_banner(scoreboard):
                 time_str = est.strftime("%-I:%M %p ET")
             except (ValueError, KeyError):
                 time_str = status or "TBD"
-           
+          
             # Status override for live/final
             if status.lower() in ["final", "in progress", "live"]:
                 time_str = status.upper()
-           
+          
             # TV
             tv = ""
             if "broadcasts" in comp and len(comp["broadcasts"]) > 0:
@@ -205,9 +209,9 @@ def render_espn_banner(scoreboard):
                     if names:
                         tv_networks.extend(names)
                 if tv_networks:
-                    tv_network = ", ".join(tv_networks[:2])  # First 1-2 networks
+                    tv_network = ", ".join(tv_networks[:2]) # First 1-2 networks
                     tv = f'<div class="tv">{tv_network}</div>'
-           
+          
             # Build snippet without indentation issues
             snippet = textwrap.dedent(f"""
                 <div class="espn-game-card">
@@ -256,7 +260,7 @@ def extract_games_from_scoreboard(scoreboard):
                 elif ha == "home":
                     home_abbr = abbr
                 else:
-                    # Fallback to order if no homeAway (rare)
+                    # Fallback to order
                     if away_abbr == "":
                         away_abbr = abbr
                     else:
@@ -268,7 +272,7 @@ def extract_games_from_scoreboard(scoreboard):
                     "home": home_abbr,
                     "away": away_abbr,
                     "status": status,
-                    "event_id": ev["id"]  # Preserved for ESPN summary
+                    "event_id": ev["id"]  # Keep if needed for ESPN summary
                 }
             )
         except Exception:
