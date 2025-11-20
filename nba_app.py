@@ -14,6 +14,14 @@ from datetime import datetime, timedelta
 import pytz
 from nba_api.stats.endpoints import leaguedashplayerstats
 import re
+import sys
+import subprocess
+
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "PyPDF2"])
+    from PyPDF2 import PdfReader
 from io import BytesIO
 from PyPDF2 import PdfReader
 
