@@ -13,91 +13,7 @@ import requests
 from datetime import datetime, timedelta
 import pytz
 from nba_api.stats.endpoints import leaguedashplayerstats
-import re
-import sys
-import subprocess
 
-try:
-    from PyPDF2 import PdfReader
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "PyPDF2"])
-    from PyPDF2 import PdfReader
-from io import BytesIO
-from PyPDF2 import PdfReader
-
-def get_nba_injuries(game_date: datetime.date) -> dict:
-    """Fetch and parse NBA's official daily injury report PDF for live statuses."""
-    date_str = game_date.strftime("%Y-%m-%d")
-    time_slots = ["12PM", "03PM", "07PM", "11PM"]  # Common update times ET
-    pdf_url_template = f"https://ak-static.cms.nba.com/referee/injury/Injury-Report_{date_str}_{{}}.pdf"
-    
-    injuries = []  # List of team injury dicts, compatible with extract_injuries_from_summary
-    
-    for slot in time_slots:
-        url = pdf_url_template.format(slot)
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200:
-                pdf_reader = PdfReader(BytesIO(r.content))
-                full_text = ""
-                for page in pdf_reader.pages:
-                    full_text += page.extract_text() + "\n"
-                
-                # Parse: Split into team sections (e.g., "Denver Nuggets\nPlayer Name\tStatus\tDetails")
-                team_sections = re.split(r'\n[A-Z][a-z]+ [A-Z][a-z]+(?: [A-Z][a-z]+)?\n', full_text)
-                for section in team_sections:
-                    if not section.strip():
-                        continue
-                    lines = section.strip().split('\n')
-                    if len(lines) < 2:
-                        continue
-                    
-                    # First line is team name
-                    team_name = lines[0].strip()
-                    # Map common names to abbrevs (extend as needed)
-                    team_abbrev_map = {
-                        "Denver Nuggets": "DEN",
-                        "New Orleans Pelicans": "NOP",
-                        "Washington Wizards": "WAS",
-                        "Minnesota Timberwolves": "MIN",
-                        # Add more teams...
-                    }
-                    team_abbr = team_abbrev_map.get(team_name, team_name.split()[-1][:3].upper())
-                    
-                    team_injuries = []
-                    for line in lines[1:]:
-                        if '\t' not in line or not line.strip():
-                            continue
-                        parts = re.split(r'\t+', line.strip())
-                        if len(parts) >= 3:
-                            player_name = parts[0].strip()
-                            status = parts[1].strip()
-                            details = ' '.join(parts[2:]).strip()
-                            
-                            # Only include probable outs (OUT, Questionable, etc.)
-                            if status in ["Out", "Questionable", "Doubtful"]:
-                                team_injuries.append({
-                                    "athlete": {"displayName": player_name},
-                                    "details": {
-                                        "fantasyStatus": {"description": status},
-                                        "type": details.split(' - ')[0] if ' - ' in details else details,
-                                        "detail": details.split(' - ')[1] if ' - ' in details else "",
-                                        "returnDate": None  # PDF doesn't have exact dates; use details if needed
-                                    }
-                                })
-                    
-                    if team_injuries:
-                        injuries.append({
-                            "team": {"abbreviation": team_abbr},
-                            "injuries": team_injuries
-                        })
-                
-                # Found a valid report—stop here
-                break
-        except Exception:
-            continue  # Try next slot
-    
-    return {"injuries": injuries}
 
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
@@ -3244,8 +3160,8 @@ with tab_ml:
     rest_home = get_rest_days(home, logs_team, ml_date)
     rest_away = get_rest_days(away, logs_team, ml_date)
     rest_diff = rest_home - rest_away
-    # Fetch injuries from NBA official report (more reliable for last-minute updates)
-    summary = get_nba_injuries(ml_date)
+    # Fetch injuries from ESPN and compute adjustments
+    summary = get_espn_game_summary(event_id)
     (
         inj_home,
         inj_away,
