@@ -95,6 +95,14 @@ NORMALIZED_POS = {"PG": "PG", "G": "PG", "SG": "SG", "SF": "SF", "PF": "PF", "F"
 
 POSITION_MAP = {}
 
+def prob_to_ml(p):
+    if p <= 0 or p >= 1:
+        return "N/A"
+    dec = 1 / p
+    if dec >= 2:
+        return f"+{int((dec - 1) * 100)}"
+    return f"-{int(100 / (dec - 1))}"
+
 def get_espn_scoreboard(date):
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date}"
     r = requests.get(url)
