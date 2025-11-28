@@ -787,7 +787,10 @@ with tab_builder:
                     leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"], index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}")
                     leg["odds"] = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}")
                 rm_col, _ = st.columns([1,5])
-                with rm_col: if st.button(f"❌ Remove Leg {leg_no}", key=f"remove_{i}"): st.session_state.legs.pop(i); st.rerun()
+                with rm_col:
+                    if st.button(f"Remove Leg {leg_no}", key=f"remove_{i}"):
+                        st.session_state.legs.pop(i)
+                        st.rerun()
     if st.session_state.awaiting_input:
         bet_text = st.text_input("Input bet", placeholder="Maxey O 24.5 P Away -110", key="freeform_input", label_visibility="collapsed")
         if bet_text.strip():
