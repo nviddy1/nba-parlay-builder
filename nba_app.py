@@ -568,6 +568,38 @@ def get_rest_days(team: str, logs: pd.DataFrame, game_date: date) -> int:
     last_game_date = past_games['GAME_DATE'].max().date()
     return (game_date - last_game_date).days
 
+@st.cache_data
+def get_rolling_metrics(season, team, n_games=10, home_away=None):
+    """Get last N games' ORTG/DRTG/Pace for team, optional home/away filter."""
+    logs = load_enhanced_team_logs(season)
+    team_logs = logs[logs['TEAM_ABBREVIATION'] == team].sort_values('GAME_DATE', ascending=False).head(n_games)
+    if home_away == 'home': team_logs = team_logs[team_logs['MATCHUP'].str.contains('vs')]
+    elif home_away == 'away': team_logs = team_logs[team_logs['MATCHUP'].str.contains('@')]
+    if team_logs.empty: return {'ortg': 110, 'drtg': 110, 'pace': 98}  # Defaults
+    return {
+        'ortg': team_logs['ortg'].mean(),
+        'drtg': team_logs['drtg'].mean(),
+        'pace': team_logs['poss'].mean()
+    }
+
+LEAGUE_AVG = {'ortg': 114.5, 'drtg': 114.5, 'pace': 99.5}  # Update via API if needed
+
+def matchup_adjust(ortg, opp_drtg):
+    """Adj team ORTG vs opp DRTG (percentile edge)."""
+    adj = ortg * (opp_drtg / LEAGUE_AVG['ortg'])
+    return adj
+
+@st.cache_data
+def get_four_factors(season, team, n=10):
+    logs = load_enhanced_team_logs(season)
+    team_logs = logs[logs['TEAM_ABBREVIATION'] == team].sort_values('GAME_DATE', ascending=False).head(n)
+    if team_logs.empty: return {'efg': 0.55, 'to': 0.14, 'orb': 0.25, 'ft': 0.18}
+    efg = (team_logs['FGM'] * 2 + team_logs['FG3M']) / (2 * (team_logs['FGA'] * 2 - team_logs['FG3A']))
+    to_rate = team_logs['TOV'] / team_logs['poss']
+    orb_rate = team_logs['OREB'] / (team_logs['OREB'] + team_logs['opp_poss'] - team_logs['opp_pts'] / team_logs['ortg'] * 100)  # Approx
+    ft_rate = team_logs['FTA'] / team_logs['FGA']
+    return {'efg': efg.mean(), 'to': to_rate.mean(), 'orb': orb_rate.mean(), 'ft': ft_rate.mean()}
+
 @st.cache_data(show_spinner=False)
 def train_margin_model(season: str):
     if not XGB_AVAILABLE: return None
@@ -1211,153 +1243,148 @@ with tab_ml:
     fc1, fc2 = st.columns([1, 1])
     with fc1: ml_date = st.date_input("Game Date", value=today, key="ml_date")
     with fc2:
-        scoreboard_ml = fetch_scoreboard_cached(ml_date.strftime("%Y%m%d")); games_ml = extract_games_from_scoreboard(scoreboard_ml)
+        scoreboard_ml = fetch_scoreboard_cached(ml_date.strftime("%Y%m%d"))
+        games_ml = extract_games_from_scoreboard(scoreboard_ml)
         if not games_ml: st.warning("No games found for this date."); st.stop()
-        game_options = [f"{g['away']} @ {g['home']}" for g in games_ml]
-        game_choice = st.selectbox("Matchup", game_options, key="ml_matchup")
-    chosen = games_ml[game_options.index(game_choice)]; home = ABBREV_MAP.get(chosen["home"], chosen["home"])
-    away = ABBREV_MAP.get(chosen["away"], chosen["away"]); event_id = chosen["event_id"]
-    game_header_html = f"""
-<div style='display:flex; align-items:center; gap:10px; font-size:1.6rem; font-weight:700; margin-top:8px;'>
-  {team_html(away)}
-  <span style='opacity:0.7;'>@</span>
-  {team_html(home)}
-</div>
-"""
-    st.markdown(game_header_html, unsafe_allow_html=True); st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    season = get_current_season_str(); logs_team = load_enhanced_team_logs(season)
-    player_impacts = load_player_impact(season); league_logs_upper = load_league_player_logs_upper(season)
+    season = get_current_season_str()
+    logs_team = load_enhanced_team_logs(season)
+    player_impacts = load_player_impact(season)
+    league_logs_upper = load_league_player_logs_upper(season)
     if logs_team.empty: st.warning("No data available for this season yet."); st.stop()
-    margin_model = train_margin_model(season); total_model = train_total_model(season)
-    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean(); team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
-    team_nrtg = team_ortg - team_drtg
-    ortg_home = float(team_ortg.get(home, 110.0)); drtg_home = float(team_drtg.get(home, 110.0)); nrtg_home = float(team_nrtg.get(home, 0.0))
-    ortg_away = float(team_ortg.get(away, 110.0)); drtg_away = float(team_drtg.get(away, 110.0)); nrtg_away = float(team_nrtg.get(away, 0.0))
-    rest_home = get_rest_days(home, logs_team, ml_date); rest_away = get_rest_days(away, logs_team, ml_date); rest_diff = rest_home - rest_away
-    summary = get_espn_game_summary(event_id)
-    inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
-    nrtg_home_adj = nrtg_home + adjust_home_nrtg; nrtg_away_adj = nrtg_away + adjust_away_nrtg; nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
-    hca = 2.7; est_margin_base = round(nrtg_diff_adj + hca, 1)
-    ml_margin = est_margin_base
-    if margin_model is not None:
-        ortg_diff = ortg_home - ortg_away; drtg_diff = drtg_home - drtg_away
-        pace_avg = (logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(home, 98.0) + logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(away, 98.0)) / 2
-        feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
-        xgb_margin = margin_model.predict(feat_vec)[0]; ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
-    est_margin = round(ml_margin, 1); est_spread_home = round(-est_margin, 1)
-    win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5)); win_prob_away = 1 - win_prob_home
-    ml_home = prob_to_ml(win_prob_home); ml_away = prob_to_ml(win_prob_away)
-    team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean(); poss_home = float(team_poss.get(home, 98.0)); poss_away = float(team_poss.get(away, 98.0))
-    proj_possessions = (poss_home + poss_away) / 2.0
-    ortg_home_total = ortg_home + adjust_home_ortg; ortg_away_total = ortg_away + adjust_away_ortg
-    drtg_home_total = drtg_home + adjust_home_drtg; drtg_away_total = drtg_away + adjust_away_drtg
-    exp_pts_home = ((ortg_home_total + drtg_away_total) / 2.0) * (proj_possessions / 100.0)
-    exp_pts_away = ((ortg_away_total + drtg_home_total) / 2.0) * (proj_possessions / 100.0)
-    projected_total_base = round(exp_pts_home + exp_pts_away, 1)
-    projected_total = projected_total_base
-    if total_model is not None:
-        total_feat = [ortg_home, ortg_away, drtg_home, drtg_away, proj_possessions, adjust_home_ortg, adjust_away_ortg, rest_diff]
-        xgb_total = total_model.predict(np.array([total_feat]))[0]; projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
-    projected_total = round(projected_total, 1)
-    st.markdown("### 📊 Game Predictions")
-    projected_html = textwrap.dedent(f"""
-<div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;'>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Projected Total</div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      <span style='font-size:1.2rem; font-weight:700;'>{projected_total:.1f}</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
-    <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-      {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
-    </div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
-    <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-      {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
-    </div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
-    </div>
-  </div>
-</div>
-""").strip()
-    st.markdown(projected_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
-    strength_html = textwrap.dedent(f"""
-<div style='margin-top:10px;'>
-  <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
-    <div style='margin-left:10px;'>
-      <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
-    </div>
-    <div style='margin-left:10px;'>
-      <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
-    </div>
-  </div>
-  <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Net Rating Differential (Adjusted): {nrtg_diff_adj:+.1f} | Projected Margin (w/ HCA): {est_margin:+.1f}</div>
-</div>
-""").strip()
-    st.markdown(strength_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    st.markdown("### 🩹 Injury Adjustments")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**{home} Out ({len(inj_home)} players):**")
-        if inj_home:
-            for i in inj_home:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
-        else: st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_home_nrtg:+.1f} | Off/Def Adjustments (totals): ORTG {adjust_home_ortg:+.1f} | DRTG {adjust_home_drtg:+.1f}*")
-    with col2:
-        st.write(f"**{away} Out ({len(inj_away)} players):**")
-        if inj_away:
-            for i in inj_away:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
-        else: st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_away_nrtg:+.1f} | Off/Def Adjustments (totals): ORTG {adjust_away_ortg:+.1f} | DRTG {adjust_away_drtg:+.1f}*")
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    st.markdown("### 📑 Compare With Sportsbook Odds")
-    col1, col2 = st.columns(2)
-    with col1: user_ml_home = st.number_input(f"{home} ML", value=0, step=10); user_spread_home = st.number_input(f"{home} Spread Odds", value=0, step=10)
-    with col2: user_ml_away = st.number_input(f"{away} ML", value=0, step=10); user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
-    def edge(model_prob, book_odds):
-        book_prob = american_to_implied(book_odds)
-        return (model_prob - book_prob) * 100 if book_prob is not None else None
-    edge_home_ml = edge(win_prob_home, user_ml_home); edge_away_ml = edge(win_prob_away, user_ml_away)
-    def edge_line(team, model_prob, fair, book, ev):
-        ev_str = "—" if ev is None else f"{ev:.2f}%"; color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
-        return textwrap.dedent(f"""
-<div style="padding:12px;border:1px solid #333;border-radius:10px; margin-bottom:12px;background:#1e1e1e;">
-  <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">{team_html(team)}</div>
-  <div style="font-size:0.9rem;color:#ddd;">
-    Model Win Prob: {model_prob*100:.1f}% <br>
-    Fair Odds: {fair} <br>
-    Sportsbook Odds: {book} <br>
-    <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
-  </div>
-</div>
-""").strip()
-    st.markdown("### 💰 EV Analysis (Moneyline)")
-    st.markdown(edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml), unsafe_allow_html=True)
-    st.markdown(edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml), unsafe_allow_html=True)
+    margin_model = train_margin_model(season)
+    total_model = train_total_model(season)
+    LEAGUE_AVG = {'ortg': 114.5, 'drtg': 114.5, 'pace': 99.5}  # Season avg; update dynamically if needed
+
+    # Slate projections list
+    slate_projs = []
+    for g in games_ml:
+        home = ABBREV_MAP.get(g["home"], g["home"])
+        away = ABBREV_MAP.get(g["away"], g["away"])
+        event_id = g["event_id"]
+        rest_home = get_rest_days(home, logs_team, ml_date)
+        rest_away = get_rest_days(away, logs_team, ml_date)
+        rest_diff = rest_home - rest_away
+
+        # Rolling metrics (last 10, venue-specific)
+        home_roll = get_rolling_metrics(season, home, 10, 'home')
+        away_roll = get_rolling_metrics(season, away, 10, 'away')
+        team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+        team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+        team_nrtg = team_ortg - team_drtg
+        drtg_away = float(team_drtg.get(away, 110.0))
+        drtg_home = float(team_drtg.get(home, 110.0))
+
+        # Matchup-adjusted efficiencies
+        ortg_home = matchup_adjust(home_roll['ortg'], drtg_away)
+        ortg_away = matchup_adjust(away_roll['ortg'], drtg_home)
+        drtg_home_adj = home_roll['drtg']
+        drtg_away_adj = away_roll['drtg']
+        nrtg_home = ortg_home - drtg_home_adj
+        nrtg_away = ortg_away - drtg_away_adj
+        nrtg_diff = nrtg_home - nrtg_away
+
+        # Injuries
+        summary = get_espn_game_summary(event_id)
+        inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(
+            summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper
+        )
+        nrtg_home_adj = nrtg_home + adjust_home_nrtg
+        nrtg_away_adj = nrtg_away + adjust_away_nrtg
+        nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
+        ortg_home_total = ortg_home + adjust_home_ortg
+        ortg_away_total = ortg_away + adjust_away_ortg
+        drtg_home_total = drtg_home_adj + adjust_home_drtg
+        drtg_away_total = drtg_away_adj + adjust_away_drtg
+
+        # Four Factors edge
+        home_ff = get_four_factors(season, home, 10)
+        away_ff = get_four_factors(season, away, 10)
+        ff_edge_home = (
+            (home_ff['efg'] - away_ff['efg']) * 20 +
+            (home_ff['orb'] - away_ff['orb']) * 10 -
+            (home_ff['to'] - away_ff['to']) * 15
+        ) / 3
+
+        # Projections
+        hca = 2.7
+        est_margin_base = nrtg_diff_adj + hca + ff_edge_home * 0.4  # Blend factors
+        ml_margin = est_margin_base
+        if margin_model is not None:
+            ortg_diff = ortg_home - ortg_away
+            drtg_diff = drtg_home_adj - drtg_away_adj
+            pace_avg = (home_roll['pace'] + away_roll['pace']) / 2
+            feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
+            xgb_margin = margin_model.predict(feat_vec)[0]
+            ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
+        est_margin = round(ml_margin, 1)
+        est_spread_home = round(-est_margin, 1)
+
+        # Win probs
+        win_prob_home = 1 / (1 + np.exp(-(est_margin + 3) / 8))  # Tighter scale
+        win_prob_away = 1 - win_prob_home
+        ml_home = prob_to_ml(win_prob_home)
+        ml_away = prob_to_ml(win_prob_away)
+
+        # Total
+        pace_game = (home_roll['pace'] + away_roll['pace']) / 2
+        exp_pts_home = ((ortg_home_total + drtg_away_total) / 2.0) * (pace_game / 100.0)
+        exp_pts_away = ((ortg_away_total + drtg_home_total) / 2.0) * (pace_game / 100.0)
+        projected_total_base = round(exp_pts_home + exp_pts_away, 1)
+        projected_total = projected_total_base + (ff_edge_home * 2)  # Symmetric adjust
+        if total_model is not None:
+            total_feat = [ortg_home, ortg_away, drtg_home_adj, drtg_away_adj, pace_game, adjust_home_ortg, adjust_away_ortg, rest_diff]
+            xgb_total = total_model.predict(np.array([total_feat]))[0]
+            projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
+        projected_total = round(projected_total, 1)
+
+        slate_projs.append({
+            'Matchup': f"{away} @ {home}",
+            'Proj Spread (Home)': f"{est_spread_home:+.1f}",
+            'Proj Total': f"{projected_total:.1f}",
+            'Home ML Fair': ml_home,
+            'Away ML Fair': ml_away,
+            'Home Win %': f"{win_prob_home*100:.1f}%",
+            'FF Edge (Home)': f"{ff_edge_home:.1f}",
+            'Pace': f"{pace_game:.1f}",
+            'Inj Adj Home': f"{adjust_home_nrtg:+.1f}",
+            'Inj Adj Away': f"{adjust_away_nrtg:+.1f}"
+        })
+
+    # Display slate table
+    st.markdown("### 📊 Full Slate Projections")
+    slate_df = pd.DataFrame(slate_projs).sort_values('Proj Spread (Home)', key=abs, ascending=False)  # Sort by closest games
+    st.dataframe(slate_df, use_container_width=True, hide_index=True)
+
+    # EV Input Expander
+    with st.expander("Enter Odds for EV Calc (Per Game)"):
+        st.caption("Input book odds below; EV auto-calcs in table above (refresh after).")
+        odds_input = {}
+        for idx, row in slate_df.iterrows():
+            matchup = row['Matchup']
+            col1, col2, col3, col4 = st.columns(4)
+            with col1: odds_input[matchup]['home_ml'] = st.number_input(f"{matchup.split('@')[1].strip()} ML", value=0, key=f"ml_home_{idx}")
+            with col2: odds_input[matchup]['away_ml'] = st.number_input(f"{matchup.split('@')[0].strip()} ML", value=0, key=f"ml_away_{idx}")
+            with col3: odds_input[matchup]['spread'] = st.number_input(f"Spread Odds", value=0, key=f"spread_{idx}")
+            with col4: odds_input[matchup]['total'] = st.number_input(f"Total O/U Odds", value=0, key=f"total_{idx}")
+
+        # Update table with EV (simple example for ML; extend for spread/total)
+        def calc_ev(model_p, book_odds):
+            book_p = american_to_implied(book_odds)
+            return (model_p - book_p) * 100 if book_p is not None else None
+
+        # Re-compute win probs per game (pseudo-code; integrate into loop above for live)
+        # For demo, add EV columns post-hoc (assume win probs from df or re-loop)
+        for idx, row in slate_df.iterrows():
+            matchup = row['Matchup']
+            home_ev = calc_ev(row['Home Win %']/100, odds_input.get(matchup, {}).get('home_ml', 0))
+            away_ev = calc_ev(1 - row['Home Win %']/100, odds_input.get(matchup, {}).get('away_ml', 0))
+            slate_df.at[idx, 'Home ML EV'] = f"{home_ev:.1f}%" if home_ev else "—"
+            slate_df.at[idx, 'Away ML EV'] = f"{away_ev:.1f}%" if away_ev else "—"
+        st.dataframe(slate_df, use_container_width=True, hide_index=True)
+
+    # Quick metrics cards for top edges
+    if not slate_df.empty:
+        max_spread_ev = slate_df['Proj Spread (Home)'].abs().idxmin()  # Closest game
+        st.metric("Top Spread Value", slate_df.iloc[max_spread_ev]['Matchup'], f"{slate_df.iloc[max_spread_ev]['Proj Spread (Home)']:+.1f}")
+        high_total = slate_df['Proj Total'].idxmax()
+        st.metric("Highest Total Proj", slate_df.iloc[high_total]['Matchup'], f"O{slate_df.iloc[high_total]['Proj Total']:.1f}")
