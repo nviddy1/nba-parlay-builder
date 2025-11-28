@@ -763,8 +763,8 @@ with tab_builder:
     if "legs" not in st.session_state: st.session_state.legs = []
     if "awaiting_input" not in st.session_state: st.session_state.awaiting_input = True
     c1, c2 = st.columns([1,1])
-    with c1: if st.button("➕ Add Leg"): st.session_state.awaiting_input = True
-    with c2: if st.button("➖ Remove Last Leg") and st.session_state.legs: st.session_state.legs.pop(); st.rerun()
+    with c1: if st.button("+ Add Leg"): st.session_state.awaiting_input = True
+    with c2: if st.button("- Remove Last Leg") and st.session_state.legs: st.session_state.legs.pop(); st.rerun()
     st.write("**Input bet**")
     if st.session_state.legs:
         for i, leg in enumerate(st.session_state.legs):
