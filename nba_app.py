@@ -25,7 +25,7 @@ import numpy as np
 from datetime import datetime
 import pytz
 from nba_api.stats.static import teams as teams_static
-from nba_api.stats.endpoints import BoxScoreFourFactors, LeagueDashTeamStats
+from nba_api.stats.endpoints import boxscorefourfactors, leaguedashteamstats
 
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
@@ -203,7 +203,7 @@ def get_efficiency_metrics(team_logs, n=10):
     effs = []
     for gid in recent['GAME_ID'].unique()[:n]:  # Limit for speed
         try:
-            bsff = boxscorefourfactors.BoxScoreFourFactors(game_id=str(gid)).get_data_frames()[0]
+            bsff = boxscorefourfactors.boxscorefourfactors(game_id=str(gid)).get_data_frames()[0]
             team_row = bsff[bsff['TEAM_ABBREVIATION'] == team_abbr]
             if not team_row.empty:
                 effs.append({
@@ -222,7 +222,7 @@ def get_efficiency_metrics(team_logs, n=10):
 def vs_similar_opponents(team_logs, opp_nrtg, season):
     """Avg performance vs. opponents in same NRTG quartile. Simplified proxy."""
     try:
-        standings = leaguedashteamstats.LeagueDashTeamStats(season=season).get_data_frames()[0]
+        standings = leaguedashteamstats.leaguedashteamstats(season=season).get_data_frames()[0]
         league_nrtg = standings.set_index('TEAM_ABBREVIATION')['NET_RATING'].to_dict()
         all_nrtgs = list(league_nrtg.values())
         quartiles = pd.qcut(all_nrtgs, 4, labels=False, duplicates='drop')
