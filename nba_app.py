@@ -25,7 +25,7 @@ import numpy as np
 from datetime import datetime
 import pytz
 from nba_api.stats.static import teams as teams_static
-from nba_api.stats.endpoints import boxscorefourfactors, leaguedashteamstats
+from nba_api.stats.endpoints import BoxScoreFourFactors, LeagueDashTeamStats, HeadToHead
 
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
