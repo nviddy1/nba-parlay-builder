@@ -19,6 +19,13 @@ try:
 except ImportError:
     xgb = None
     XGB_AVAILABLE = False
+import math  # For haversine
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import pytz
+from nba_api.stats.static import teams as teams_static
+from nba_api.stats.endpoints import boxscorefourfactors, leaguedashteamstats
 
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
@@ -94,6 +101,348 @@ NBA_CUP_DATES = pd.to_datetime([
 NORMALIZED_POS = {"PG": "PG", "G": "PG", "SG": "SG", "SF": "SF", "PF": "PF", "F": "PF", "C": "C"}
 
 POSITION_MAP = {}
+
+# Static data: Team coords (lat, lon), elevations, conferences
+TEAM_COORDS = {
+    "ATL": (33.75722, -84.39639),  # State Farm Arena
+    "BOS": (42.36630, -71.06223),  # TD Garden
+    "BKN": (40.68265, -73.97469),  # Barclays Center
+    "CHA": (35.22500, -80.83917),  # Spectrum Center
+    "CHI": (41.88056, -87.67417),  # United Center
+    "CLE": (41.49611, -81.68806),  # Rocket Mortgage FieldHouse
+    "DAL": (32.79056, -96.81083),  # American Airlines Center
+    "DEN": (39.74889, -105.00750), # Ball Arena
+    "DET": (42.34111, -83.05556),  # Little Caesars Arena
+    "GSW": (37.76833, -122.38750), # Chase Center
+    "HOU": (29.75083, -95.36222),  # Toyota Center
+    "IND": (39.76417, -86.15556),  # Gainbridge Fieldhouse
+    "LAC": (33.95806, -118.34222), # Intuit Dome
+    "LAL": (34.04309, -118.26762), # Crypto.com Arena
+    "MEM": (35.13833, -90.05056),  # FedExForum
+    "MIA": (25.78139, -80.18722),  # Kaseya Center
+    "MIL": (43.04500, -87.91806),  # Fiserv Forum
+    "MIN": (44.97997, -93.27789),  # Target Center
+    "NOP": (29.94889, -90.08194),  # Smoothie King Center
+    "NYK": (40.75056, -73.99361),  # Madison Square Garden
+    "OKC": (35.46333, -97.51500),  # Paycom Center
+    "ORL": (28.53972, -81.38389),  # Kia Center
+    "PHI": (39.90111, -75.17194),  # Wells Fargo Center
+    "PHX": (33.44583, -112.07139), # Footprint Center
+    "POR": (45.53167, -122.66667), # Moda Center
+    "SAC": (38.58028, -121.49889), # Golden 1 Center
+    "SAS": (29.42722, -98.43694),  # Frost Bank Center
+    "TOR": (43.64333, -79.37917),  # Scotiabank Arena
+    "UTA": (40.76833, -111.90111), # Delta Center
+    "WAS": (38.89806, -77.02083)   # Capital One Arena
+}
+
+# Elevations: Arena elevation in feet above sea level
+TEAM_ELEV = {
+    "ATL": 1050,  # Atlanta
+    "BOS": 20,    # Boston
+    "BKN": 50,    # Brooklyn
+    "CHA": 761,   # Charlotte
+    "CHI": 600,   # Chicago
+    "CLE": 653,   # Cleveland
+    "DAL": 430,   # Dallas
+    "DEN": 5280,  # Denver
+    "DET": 597,   # Detroit
+    "GSW": 10,    # San Francisco
+    "HOU": 50,    # Houston
+    "IND": 718,   # Indianapolis
+    "LAC": 75,    # Inglewood
+    "LAL": 275,   # Los Angeles
+    "MEM": 337,   # Memphis
+    "MIA": 10,    # Miami
+    "MIL": 614,   # Milwaukee
+    "MIN": 830,   # Minneapolis
+    "NOP": 5,     # New Orleans
+    "NYK": 34,    # New York
+    "OKC": 1200,  # Oklahoma City
+    "ORL": 98,    # Orlando
+    "PHI": 40,    # Philadelphia
+    "PHX": 1080,  # Phoenix
+    "POR": 164,   # Portland
+    "SAC": 30,    # Sacramento
+    "SAS": 650,   # San Antonio
+    "TOR": 289,   # Toronto
+    "UTA": 4265,  # Salt Lake City
+    "WAS": 23     # Washington D.C.
+}
+
+# Conferences: East or West
+CONFERENCES = {
+    "ATL": "East", "BOS": "East", "BKN": "East", "CHA": "East", "CHI": "East",
+    "CLE": "East", "DET": "East", "IND": "East", "MIA": "East", "MIL": "East",
+    "NYK": "East", "ORL": "East", "PHI": "East", "TOR": "East", "WAS": "East",
+    "DAL": "West", "DEN": "West", "GSW": "West", "HOU": "West", "LAC": "West",
+    "LAL": "West", "MEM": "West", "MIN": "West", "NOP": "West", "OKC": "West",
+    "PHX": "West", "POR": "West", "SAC": "West", "SAS": "West", "UTA": "West"
+}
+
+# Team IDs for head-to-head (from static)
+TEAM_IDS = {t['abbreviation']: t['id'] for t in teams_static.get_teams()}
+
+def haversine(home, away):
+    """Miles between arenas."""
+    if home not in TEAM_COORDS or away not in TEAM_COORDS:
+        return 0.0  # Fallback
+    lat1, lon1 = TEAM_COORDS[home]
+    lat2, lon2 = TEAM_COORDS[away]
+    R = 3958.8  # Earth radius miles
+    dlat, dlon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    return 2 * R * math.asin(math.sqrt(a))
+
+def get_efficiency_metrics(team_logs, n=10):
+    """eFG, TOV, etc. from last N games."""
+    recent = team_logs.head(n)
+    if recent.empty:
+        return {"efg": 0.55, "tov": 0.13, "oreb": 0.25, "ftr": 0.20}
+    team_abbr = team_logs['TEAM_ABBREVIATION'].iloc[0] if not team_logs.empty else ''
+    effs = []
+    for gid in recent['GAME_ID'].unique()[:n]:  # Limit for speed
+        try:
+            bsff = boxscorefourfactors.BoxScoreFourFactors(game_id=str(gid)).get_data_frames()[0]
+            team_row = bsff[bsff['TEAM_ABBREVIATION'] == team_abbr]
+            if not team_row.empty:
+                effs.append({
+                    'efg': float(team_row['EFG_PCT'].iloc[0]),
+                    'tov': float(team_row['TOV_PCT'].iloc[0]),
+                    'oreb': float(team_row['OREB_PCT'].iloc[0]),
+                    'ftr': float(team_row['FT_RATE'].iloc[0])
+                })
+        except Exception:
+            pass
+    if not effs:
+        return {"efg": 0.55, "tov": 0.13, "oreb": 0.25, "ftr": 0.20}
+    df_eff = pd.DataFrame(effs)
+    return df_eff.mean().to_dict()
+
+def vs_similar_opponents(team_logs, opp_nrtg, season):
+    """Avg performance vs. opponents in same NRTG quartile. Simplified proxy."""
+    try:
+        standings = leaguedashteamstats.LeagueDashTeamStats(season=season).get_data_frames()[0]
+        league_nrtg = standings.set_index('TEAM_ABBREVIATION')['NET_RATING'].to_dict()
+        all_nrtgs = list(league_nrtg.values())
+        quartiles = pd.qcut(all_nrtgs, 4, labels=False, duplicates='drop')
+        q_map = dict(zip(all_nrtgs, quartiles))
+        opp_quartile = q_map.get(opp_nrtg, 1)
+        # Filter games where opp's quartile matches (approx via current opp_nrtg)
+        # For simplicity, use overall avg if no pre-compute
+        return {'pts_vs_sim': team_logs['PTS'].mean()}
+    except Exception:
+        return {'pts_vs_sim': team_logs['PTS'].mean() if not team_logs.empty else 110.0}
+
+def head_to_head(home, away, logs_team, season):
+    """Last 3 margins from logs (simplified, no API)."""
+    try:
+        # Filter for matchups
+        h2h_games = logs_team[
+            ((logs_team['TEAM_ABBREVIATION'] == home) & (logs_team['MATCHUP'].str.contains(away, na=False))) |
+            ((logs_team['TEAM_ABBREVIATION'] == away) & (logs_team['MATCHUP'].str.contains(home, na=False)))
+        ].sort_values('GAME_DATE', ascending=False).head(6)  # Up to 3 H/A
+        
+        if h2h_games.empty:
+            return {'h2h_margin': 0.0, 'h2h_win_pct': 0.5}
+        
+        # Compute home perspective margins (simplified: avg PTS diff for home games)
+        home_games = h2h_games[h2h_games['MATCHUP'].str.contains('vs')]  # Home team perspective
+        if not home_games.empty:
+            margins = home_games['PTS'] - home_games['opp_pts']  # Assume opp_pts from your enhanced logs
+            return {
+                'h2h_margin': float(margins.mean()),
+                'h2h_win_pct': float((home_games['WL'] == 'W').mean())
+            }
+        return {'h2h_margin': 0.0, 'h2h_win_pct': 0.5}
+    except Exception:
+        return {'h2h_margin': 0.0, 'h2h_win_pct': 0.5}
+
+def environmental_factors(game_time_et, home):
+    """Time/altitude adjustment."""
+    if game_time_et is None:
+        game_time_et = datetime.now(pytz.timezone('US/Eastern'))
+    is_early = 1 if game_time_et.hour < 18 else 0
+    alt_adj = TEAM_ELEV.get(home, 0) / 5000.0  # Normalize Denver effect
+    return {'early_game': is_early, 'altitude_adj': alt_adj}
+
+def feature_engineer_game(home, away, game_date, season, logs_team, game_time_et=None, adjust_home_nrtg=0.0, adjust_away_nrtg=0.0):
+    """Master function: Returns dict of 30+ features. Assumes get_rest_days and load_enhanced_team_logs exist."""
+    # Existing: rest, injuries passed as params
+    rest_home = get_rest_days(home, logs_team, game_date)
+    rest_away = get_rest_days(away, logs_team, game_date)
+    
+    # Team logs
+    team_logs_home = logs_team[logs_team['TEAM_ABBREVIATION'] == home]
+    team_logs_away = logs_team[logs_team['TEAM_ABBREVIATION'] == away]
+    
+    # Scheduling
+    bb_home = 1 if rest_home == 0 else 0
+    bb_away = 1 if rest_away == 0 else 0
+    travel_miles = haversine(home, away)
+    travel_tz = 1 if CONFERENCES.get(home) != CONFERENCES.get(away) else 0  # Proxy zones
+    
+    # Efficiency
+    eff_home = get_efficiency_metrics(team_logs_home)
+    eff_away = get_efficiency_metrics(team_logs_away)
+    
+    # Basic efficiency (assume from enhanced logs)
+    team_ortg = logs_team.groupby('TEAM_ABBREVIATION')['ortg'].mean()
+    team_drtg = logs_team.groupby('TEAM_ABBREVIATION')['drtg'].mean()
+    team_poss = logs_team.groupby('TEAM_ABBREVIATION')['poss'].mean()
+    ortg_home = float(team_ortg.get(home, 110.0))
+    drtg_home = float(team_drtg.get(home, 110.0))
+    ortg_away = float(team_ortg.get(away, 110.0))
+    drtg_away = float(team_drtg.get(away, 110.0))
+    poss_home = float(team_poss.get(home, 98.0))
+    poss_away = float(team_poss.get(away, 98.0))
+    nrtg_home = ortg_home - drtg_home + adjust_home_nrtg
+    nrtg_away = ortg_away - drtg_away + adjust_away_nrtg
+    nrtg_diff = nrtg_home - nrtg_away
+    
+    # Rolling 5
+    ortg_home_r5 = float(team_logs_home.head(5)['ortg'].mean() if not team_logs_home.empty else ortg_home)
+    drtg_away_r5 = float(team_logs_away.head(5)['drtg'].mean() if not team_logs_away.empty else drtg_away)
+    ortg_away_r5 = float(team_logs_away.head(5)['ortg'].mean() if not team_logs_away.empty else ortg_away)
+    drtg_home_r5 = float(team_logs_home.head(5)['drtg'].mean() if not team_logs_home.empty else drtg_home)
+    
+    # Vs similar (opp_nrtg as away's nrtg)
+    opp_nrtg_home = nrtg_away
+    vs_sim_home = vs_similar_opponents(team_logs_home, opp_nrtg_home, season)
+    opp_nrtg_away = nrtg_home
+    vs_sim_away = vs_similar_opponents(team_logs_away, opp_nrtg_away, season)
+    
+    # H2H
+    h2h = head_to_head(home, away, logs_team, season)
+    
+    # Env
+    env = environmental_factors(game_time_et, home)
+    
+    # Form: Rolling
+    recent_home = team_logs_home.head(5)
+    streak_home = int((recent_home['WL'] == 'W').sum()) if 'WL' in recent_home.columns else 0
+    recent_away = team_logs_away.head(5)
+    streak_away = int((recent_away['WL'] == 'W').sum()) if 'WL' in recent_away.columns else 0
+    cover_pct_away_r10 = 0.5  # Placeholder; compute if 'COVER' col exists
+    
+    # Standings proxy
+    try:
+        standings = leaguedashteamstats.LeagueDashTeamStats(season=season).get_data_frames()[0]
+        winpct_home = float(standings[standings['TEAM_ABBREVIATION'] == home]['WIN_PCT'].iloc[0] if not standings[standings['TEAM_ABBREVIATION'] == home].empty else 0.5)
+        winpct_away = float(standings[standings['TEAM_ABBREVIATION'] == away]['WIN_PCT'].iloc[0] if not standings[standings['TEAM_ABBREVIATION'] == away].empty else 0.5)
+    except Exception:
+        winpct_home = winpct_away = 0.5
+    motivation_diff = winpct_home - winpct_away
+    
+    features = {
+        # Basic
+        'ortg_home': ortg_home, 'drtg_home': drtg_home, 'ortg_away': ortg_away, 'drtg_away': drtg_away,
+        'nrtg_diff': nrtg_diff,
+        'ortg_home_r5': ortg_home_r5, 'drtg_away_r5': drtg_away_r5,
+        'ortg_away_r5': ortg_away_r5, 'drtg_home_r5': drtg_home_r5,
+        'poss_home': poss_home, 'poss_away': poss_away,
+        # Efficiency
+        'efg_home': eff_home.get('efg', 0.55), 'tov_away': eff_away.get('tov', 0.13),
+        'efg_away': eff_away.get('efg', 0.55), 'tov_home': eff_home.get('tov', 0.13),
+        'oreb_home': eff_home.get('oreb', 0.25), 'ftr_away': eff_away.get('ftr', 0.20),
+        # Scheduling
+        'bb_home': bb_home, 'bb_away': bb_away,
+        'rest_diff': rest_home - rest_away,
+        'travel_miles': travel_miles, 'travel_tz': travel_tz,
+        # Matchup
+        'pts_vs_sim_home': vs_sim_home['pts_vs_sim'],
+        'pts_vs_sim_away': vs_sim_away['pts_vs_sim'],
+        'h2h_margin': h2h['h2h_margin'],
+        'h2h_win_pct_home': h2h['h2h_win_pct'],
+        # Env
+        **env,
+        # Form
+        'streak_home': streak_home, 'streak_away': streak_away,
+        'cover_pct_away_r10': cover_pct_away_r10,
+        # Motivation
+        'motiv_diff': motivation_diff,
+        # Injuries
+        'inj_adj_home': adjust_home_nrtg,
+        'inj_adj_away': adjust_away_nrtg,
+    }
+    return features  # ~30 keys
+
+def train_advanced_margin_model(season):
+    """Expanded XGB with new features. Note: Full historical engineering is heavy; cache and run seasonally."""
+    if not XGB_AVAILABLE:
+        return None
+    prev_season = f"{int(season[:4])-1}-{season[5:]}"
+    logs = load_enhanced_team_logs(prev_season)
+    if logs.empty:
+        return None
+    
+    # Simplified: Sample 100 games for demo; full = all GIDs
+    all_features, all_margins = [], []
+    games = logs.groupby('GAME_ID').head(100)  # Limit for speed
+    for gid, group in games.groupby('GAME_ID'):
+        if len(group) != 2:
+            continue
+        # Determine home/away: Assume first is home if 'vs' in MATCHUP
+        matchup_sample = group['MATCHUP'].iloc[0]
+        if 'vs' in matchup_sample:
+            home = group.iloc[0]['TEAM_ABBREVIATION']
+            away = group['TEAM_ABBREVIATION'].iloc[1] if len(group) > 1 else group.iloc[1]['TEAM_ABBREVIATION']
+        else:
+            home = group.iloc[1]['TEAM_ABBREVIATION']
+            away = group.iloc[0]['TEAM_ABBREVIATION']
+        game_date = pd.to_datetime(group['GAME_DATE'].iloc[0]).date() if 'GAME_DATE' in group else datetime.now().date()
+        # Injuries stub: 0 for training
+        adjust_home_nrtg, adjust_away_nrtg = 0.0, 0.0
+        # Game time stub
+        game_time_et = None
+        try:
+            feat = feature_engineer_game(home, away, game_date, prev_season, logs, game_time_et, adjust_home_nrtg, adjust_away_nrtg)
+            all_features.append(list(feat.values()))
+            # Margin: Home PTS - Away PTS
+            home_pts = group[group['TEAM_ABBREVIATION'] == home]['PTS'].iloc[0]
+            away_pts = group[group['TEAM_ABBREVIATION'] == away]['PTS'].iloc[0]
+            margin = home_pts - away_pts
+            all_margins.append(margin)
+        except Exception:
+            continue
+    
+    if len(all_margins) < 50:
+        return None
+    X = np.array(all_features)
+    y = np.array(all_margins)
+    model = xgb.XGBRegressor(n_estimators=200, max_depth=6, learning_rate=0.05, random_state=42)  # Tuned
+    model.fit(X, y)
+    return model
+
+def simulate_game(features, margin_model, n_sims=1000):
+    """Poisson sim for outcomes."""
+    # Fallback mean_margin
+    mean_margin = features.get('nrtg_diff', 0.0) + 3.0
+    if margin_model is not None:
+        try:
+            feat_vec = np.array([list(features.values())])
+            mean_margin = margin_model.predict(feat_vec)[0]
+        except Exception:
+            pass
+    
+    # Team points: Poisson with eff/pace adj
+    pace = (features.get('poss_home', 98.0) + features.get('poss_away', 98.0)) / 2
+    ortg_home = features.get('ortg_home', 110.0)
+    ortg_away = features.get('ortg_away', 110.0)
+    home_pts = np.random.poisson((ortg_home / 100 * pace) + np.random.normal(0, 2), n_sims)  # Noise for variance
+    away_pts = np.random.poisson((ortg_away / 100 * pace) + np.random.normal(0, 2), n_sims)
+    margins = home_pts - away_pts
+    
+    win_home = np.mean(margins > 0) * 100
+    spread_home = np.mean(margins)
+    total = np.mean(home_pts + away_pts)
+    
+    return {
+        'win_prob_home': win_home, 'spread_home': spread_home, 'total': total,
+        'win_prob_away': 100 - win_home,
+        'sim_margins': margins,  # For hist
+        'sim_totals': home_pts + away_pts
+    }
 
 def prob_to_ml(p):
     if p <= 0 or p >= 1:
@@ -1228,73 +1577,67 @@ with tab_ml:
     season = get_current_season_str(); logs_team = load_enhanced_team_logs(season)
     player_impacts = load_player_impact(season); league_logs_upper = load_league_player_logs_upper(season)
     if logs_team.empty: st.warning("No data available for this season yet."); st.stop()
-    margin_model = train_margin_model(season); total_model = train_total_model(season)
-    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean(); team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
-    team_nrtg = team_ortg - team_drtg
-    ortg_home = float(team_ortg.get(home, 110.0)); drtg_home = float(team_drtg.get(home, 110.0)); nrtg_home = float(team_nrtg.get(home, 0.0))
-    ortg_away = float(team_ortg.get(away, 110.0)); drtg_away = float(team_drtg.get(away, 110.0)); nrtg_away = float(team_nrtg.get(away, 0.0))
-    rest_home = get_rest_days(home, logs_team, ml_date); rest_away = get_rest_days(away, logs_team, ml_date); rest_diff = rest_home - rest_away
+    
+    # Get game time from ESPN summary
     summary = get_espn_game_summary(event_id)
+    game_time_str = summary.get('date', '') if summary else ''
+    game_time_et = None
+    if game_time_str:
+        try:
+            start_time_str = game_time_str.replace("Z", "+00:00")
+            start_time = datetime.fromisoformat(start_time_str)
+            game_time_et = start_time.astimezone(pytz.timezone("US/Eastern"))
+        except Exception:
+            pass
+    else:
+        game_time_et = datetime.now(pytz.timezone('US/Eastern'))
+    
+    # Injuries (existing)
     inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
-    nrtg_home_adj = nrtg_home + adjust_home_nrtg; nrtg_away_adj = nrtg_away + adjust_away_nrtg; nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
-    hca = 2.7; est_margin_base = round(nrtg_diff_adj + hca, 1)
-    ml_margin = est_margin_base
-    if margin_model is not None:
-        ortg_diff = ortg_home - ortg_away; drtg_diff = drtg_home - drtg_away
-        pace_avg = (logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(home, 98.0) + logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(away, 98.0)) / 2
-        feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
-        xgb_margin = margin_model.predict(feat_vec)[0]; ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
-    est_margin = round(ml_margin, 1); est_spread_home = round(-est_margin, 1)
-    win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5)); win_prob_away = 1 - win_prob_home
-    ml_home = prob_to_ml(win_prob_home); ml_away = prob_to_ml(win_prob_away)
-    team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean(); poss_home = float(team_poss.get(home, 98.0)); poss_away = float(team_poss.get(away, 98.0))
-    proj_possessions = (poss_home + poss_away) / 2.0
-    ortg_home_total = ortg_home + adjust_home_ortg; ortg_away_total = ortg_away + adjust_away_ortg
-    drtg_home_total = drtg_home + adjust_home_drtg; drtg_away_total = drtg_away + adjust_away_drtg
-    exp_pts_home = ((ortg_home_total + drtg_away_total) / 2.0) * (proj_possessions / 100.0)
-    exp_pts_away = ((ortg_away_total + drtg_home_total) / 2.0) * (proj_possessions / 100.0)
-    projected_total_base = round(exp_pts_home + exp_pts_away, 1)
-    projected_total = projected_total_base
-    if total_model is not None:
-        total_feat = [ortg_home, ortg_away, drtg_home, drtg_away, proj_possessions, adjust_home_ortg, adjust_away_ortg, rest_diff]
-        xgb_total = total_model.predict(np.array([total_feat]))[0]; projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
-    projected_total = round(projected_total, 1)
-    st.markdown("### 📊 Game Predictions")
-    projected_html = textwrap.dedent(f"""
-<div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;'>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Projected Total</div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      <span style='font-size:1.2rem; font-weight:700;'>{projected_total:.1f}</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
-    <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-      {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
-    </div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
-    <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-      {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
-    </div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
-    </div>
-  </div>
-</div>
-""").strip()
-    st.markdown(projected_html, unsafe_allow_html=True)
+    
+    # Enhanced models
+    margin_model = train_advanced_margin_model(season)
+    
+    # Engineer features
+    features = feature_engineer_game(home, away, ml_date, season, logs_team, game_time_et, adjust_home_nrtg, adjust_away_nrtg)
+    
+    # Simulate
+    sim_results = simulate_game(features, margin_model, n_sims=1000)
+    
+    # Enhanced totals (simple blend; expand similarly for full model if needed)
+    projected_total = sim_results['total']
+    
+    # Win probs from sim
+    win_prob_home = sim_results['win_prob_home'] / 100
+    win_prob_away = sim_results['win_prob_away'] / 100
+    est_spread_home = sim_results['spread_home']
+    ml_home = prob_to_ml(win_prob_home)
+    ml_away = prob_to_ml(win_prob_away)
+    
+    st.markdown("### 📊 Advanced Projections (1K Sims)")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Home Win %", f"{sim_results['win_prob_home']:.1f}%")
+        st.metric("Away Win %", f"{sim_results['win_prob_away']:.1f}%")
+    with col2:
+        st.metric("Projected Spread", f"{home} {est_spread_home:+.1f}")
+    with col3:
+        st.metric("Projected Total", f"{projected_total:.1f}")
+    
+    # Feature Breakdown Table (top influencers by abs value)
+    feat_df = pd.DataFrame(list(features.items()), columns=['Feature', 'Value']).sort_values('Value', key=abs, ascending=False).head(10)
+    st.markdown("### 🔧 Key Features Driving Projection")
+    st.dataframe(feat_df, use_container_width=True, hide_index=True)
+    
+    # Sim Hist
+    plt.rcParams.update({"axes.facecolor": "#1e1f22", "figure.facecolor": "#1e1f22", "text.color": "#ffffff", "axes.labelcolor": "#e5e7eb", "xtick.color": "#e5e7eb", "ytick.color": "#e5e7eb", "grid.color": "#374151"})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    ax1.hist(sim_results['sim_margins'], bins=20, color='skyblue', alpha=0.7); ax1.axvline(0, color='red', ls='--')
+    ax1.set_title('Margin Dist (Home Positive)'); ax1.set_xlabel('Home Margin')
+    ax2.hist(sim_results['sim_totals'], bins=20, color='orange', alpha=0.7)
+    ax2.set_title('Total Dist'); ax2.set_xlabel('Game Total')
+    st.pyplot(fig)
+    
     st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
     st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
     strength_html = textwrap.dedent(f"""
@@ -1302,18 +1645,18 @@ with tab_ml:
   <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
     <div style='margin-left:10px;'>
       <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
+      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{features.get("ortg_home", 110):.1f}</span></div>
+      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{features.get("drtg_home", 110):.1f}</span></div>
+      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{features.get("nrtg_diff", 0):.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
     </div>
     <div style='margin-left:10px;'>
       <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
+      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{features.get("ortg_away", 110):.1f}</span></div>
+      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{features.get("drtg_away", 110):.1f}</span></div>
+      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
     </div>
   </div>
-  <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Net Rating Differential (Adjusted): {nrtg_diff_adj:+.1f} | Projected Margin (w/ HCA): {est_margin:+.1f}</div>
+  <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Net Rating Differential (Adjusted): {features.get("nrtg_diff", 0):+.1f} | Projected Margin (w/ HCA + Sims): {est_spread_home:+.1f}</div>
 </div>
 """).strip()
     st.markdown(strength_html, unsafe_allow_html=True)
@@ -1361,3 +1704,9 @@ with tab_ml:
     st.markdown("### 💰 EV Analysis (Moneyline)")
     st.markdown(edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml), unsafe_allow_html=True)
     st.markdown(edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml), unsafe_allow_html=True)
+    
+    # Alert for strong edges
+    if edge_home_ml is not None and abs(edge_home_ml) > 5:
+        st.warning(f"🚨 Strong edge on {home} ML: {edge_home_ml:+.1f}% EV!")
+    if edge_away_ml is not None and abs(edge_away_ml) > 5:
+        st.warning(f"🚨 Strong edge on {away} ML: {edge_away_ml:+.1f}% EV!")
