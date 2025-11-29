@@ -95,7 +95,6 @@ NORMALIZED_POS = {"PG": "PG", "G": "PG", "SG": "SG", "SF": "SF", "PF": "PF", "F"
 
 POSITION_MAP = {}
 
-
 def prob_to_ml(p):
     if p <= 0 or p >= 1:
         return "N/A"
