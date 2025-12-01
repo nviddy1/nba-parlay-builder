@@ -671,10 +671,11 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
         min_games_threshold = max(1, int(0.1 * team_total_games))
         if gp < min_games_threshold: return 0.0
         return float(impact_lookup.get(name_upper, 1.0))
-    def compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
+    # RENAMED LOCAL FUNCTIONS TO AVOID NAME CONFLICT
+    def _local_compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
         return compute_team_ortg_delta(team_abbr, player_name_upper, team_games, league_logs_upper, game_date)
-    def compute_team_drtg_delta(team_abbr: str, player_name_upper: str) -> float:
+    def _local_compute_team_drtg_delta(team_abbr: str, player_name_upper: str) -> float:
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
         return compute_team_drtg_delta(team_abbr, player_name_upper, team_games, league_logs_upper, game_date)
     for team_inj_item in injuries_top:
@@ -696,8 +697,9 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
             player_importance = get_player_impact(player_name_upper, team_abbr)
             base_adjust = -impact_scale_nrtg * player_importance * status_weight
             team_nrtg_adj += base_adjust * rest_multiplier
-            ortg_delta = compute_team_ortg_delta(team_abbr, player_name_upper); team_ortg_adj += ortg_delta * status_weight
-            drtg_delta = compute_team_drtg_delta(team_abbr, player_name_upper); team_drtg_adj += drtg_delta * status_weight
+            # USE RENAMED LOCAL FUNCTIONS
+            ortg_delta = _local_compute_team_ortg_delta(team_abbr, player_name_upper); team_ortg_adj += ortg_delta * status_weight
+            drtg_delta = _local_compute_team_drtg_delta(team_abbr, player_name_upper); team_drtg_adj += drtg_delta * status_weight
             team_nrtg_adj += (ortg_delta - drtg_delta) * status_weight * rest_multiplier
             team_inj_list.append({"name": player_name, "status": fantasy_status, "injury": full_injury, "return_date": return_date, "impact_score": round(player_importance, 2), "status_weight": status_weight, "ortg_delta": round(ortg_delta, 2), "drtg_delta": round(drtg_delta, 2)})
         team_nrtg_adj = float(np.clip(team_nrtg_adj, -12, 12)); team_ortg_adj = float(np.clip(team_ortg_adj, -10, 10)); team_drtg_adj = float(np.clip(team_drtg_adj, -10, 10))
