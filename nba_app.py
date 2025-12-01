@@ -663,17 +663,33 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
     if player_impacts is not None and not player_impacts.empty:
         impact_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"].to_dict()
         gp_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["GP"].to_dict()
-    else: impact_lookup, gp_lookup = {}, {}
+        # Also create a dict for quick NET_RATING lookup
+        net_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["NET_RATING"].to_dict()
+    else: 
+        impact_lookup, gp_lookup, net_lookup = {}, {}, {}
     impact_scale_nrtg = 1.5; matchup_factor_home = matchup_factor_away = 1.0
     team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
     def get_player_impact(name_upper: str, team_abbr: str) -> float:
-        if not impact_lookup: return 1.0
-        gp = gp_lookup.get(name_upper, 0)
+        if league_logs_upper.empty: return 1.0
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
-        team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
-        min_games_threshold = max(1, int(0.1 * team_total_games))
-        if gp < min_games_threshold: return 0.0
-        return float(impact_lookup.get(name_upper, 1.0))
+        if team_games.empty: return 1.0
+        # Limit to last 10 team games for recent impact
+        recent_team_games = team_games.sort_values('GAME_DATE').tail(10)
+        if recent_team_games.empty: return 1.0
+        recent_plog = league_logs_upper[
+            (league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & 
+            (league_logs_upper["PLAYER_NAME_UPPER"] == name_upper) & 
+            (league_logs_upper["GAME_ID"].isin(recent_team_games["GAME_ID"]))
+        ]
+        recent_gp = len(recent_plog)
+        if recent_gp < 3: return 0.0  # Insufficient recent games
+        recent_mins = recent_plog["MIN_NUM"].mean()
+        minute_factor = recent_mins / 24.0
+        # Use season NET_RATING for net_factor (as per-game net is complex to compute from logs)
+        season_net = net_lookup.get(name_upper, 0)
+        net_factor = 1 + (season_net / 20.0)
+        impact = minute_factor * net_factor
+        return float(np.clip(impact, 0.2, 2.0))
     # RENAMED LOCAL FUNCTIONS TO AVOID NAME CONFLICT
     def _local_compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
