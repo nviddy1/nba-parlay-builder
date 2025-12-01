@@ -268,6 +268,14 @@ def prob_to_american(p: float):
     dec = 1.0/p
     return f"+{int(round((dec-1)*100))}" if dec >= 2.0 else f"-{int(round(100/(dec-1)))}"
 
+def prob_to_ml(p):
+    if p <= 0 or p >= 1:
+        return "N/A"
+    dec = 1 / p
+    if dec >= 2:
+        return f"+{int((dec - 1) * 100)}"
+    return f"-{int(100 / (dec - 1))}"
+
 def fmt_half(x: float | int) -> str:
     try: return f"{float(x):.1f}".rstrip("0").rstrip(".")
     except: return str(x)
@@ -763,8 +771,14 @@ with tab_builder:
     if "legs" not in st.session_state: st.session_state.legs = []
     if "awaiting_input" not in st.session_state: st.session_state.awaiting_input = True
     c1, c2 = st.columns([1,1])
-    with c1: if st.button("➕ Add Leg"): st.session_state.awaiting_input = True
-    with c2: if st.button("➖ Remove Last Leg") and st.session_state.legs: st.session_state.legs.pop(); st.rerun()
+    c1, c2 = st.columns([1,1])
+    with c1:
+        if st.button("+ Add Leg"):
+            st.session_state.awaiting_input = True
+    with c2:
+        if st.button("− Remove Last Leg") and st.session_state.legs:
+            st.session_state.legs.pop()
+            st.rerun()
     st.write("**Input bet**")
     if st.session_state.legs:
         for i, leg in enumerate(st.session_state.legs):
@@ -782,7 +796,10 @@ with tab_builder:
                     leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"], index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}")
                     leg["odds"] = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}")
                 rm_col, _ = st.columns([1,5])
-                with rm_col: if st.button(f"❌ Remove Leg {leg_no}", key=f"remove_{i}"): st.session_state.legs.pop(i); st.rerun()
+                with rm_col:
+                    if st.button(f"Remove Leg {leg_no}", key=f"remove_{i}"):
+                        st.session_state.legs.pop(i)
+                        st.rerun()
     if st.session_state.awaiting_input:
         bet_text = st.text_input("Input bet", placeholder="Maxey O 24.5 P Away -110", key="freeform_input", label_visibility="collapsed")
         if bet_text.strip():
