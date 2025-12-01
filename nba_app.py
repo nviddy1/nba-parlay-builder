@@ -1145,157 +1145,155 @@ with tab_matchups:
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
 with tab_ml:
     st.subheader("💵 ML, Spread, & Totals Analyzer")
-    st.caption("Get live projections and edges for moneyline, spread, and totals using team strength and game context")
-    fc1, fc2 = st.columns([1, 1])
+    st.caption("Projections for all games on the selected date. Click expanders for detailed efficiencies & injuries.")
+    fc1 = st.column(1)
     with fc1: ml_date = st.date_input("Game Date", value=today, key="ml_date")
-    with fc2:
-        scoreboard_ml = fetch_scoreboard_cached(ml_date.strftime("%Y%m%d")); games_ml = extract_games_from_scoreboard(scoreboard_ml)
-        if not games_ml: st.warning("No games found for this date."); st.stop()
-        game_options = [f"{g['away']} @ {g['home']}" for g in games_ml]
-        game_choice = st.selectbox("Matchup", game_options, key="ml_matchup")
-    chosen = games_ml[game_options.index(game_choice)]; home = ABBREV_MAP.get(chosen["home"], chosen["home"])
-    away = ABBREV_MAP.get(chosen["away"], chosen["away"]); event_id = chosen["event_id"]
-    game_header_html = f"""
-<div style='display:flex; align-items:center; gap:10px; font-size:1.6rem; font-weight:700; margin-top:8px;'>
-  {team_html(away)}
-  <span style='opacity:0.7;'>@</span>
-  {team_html(home)}
+    date_str = ml_date.strftime("%Y%m%d")
+    scoreboard_ml = fetch_scoreboard_cached(date_str)
+    games_ml = extract_games_from_scoreboard(scoreboard_ml)
+    if not games_ml:
+        st.warning("No games found for this date.")
+        st.stop()
+    season = get_current_season_str()
+    @st.cache_data(ttl=1800)  # Cache for 30min
+    def get_game_data(season):
+        logs_team = load_enhanced_team_logs(season)
+        player_impacts = load_player_impact(season)
+        league_logs_upper = load_league_player_logs_upper(season)
+        margin_model = train_margin_model(season)
+        total_model = train_total_model(season)
+        team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+        team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+        team_nrtg = team_ortg - team_drtg
+        team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean()
+        return logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss
+    logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss = get_game_data(season)
+    if logs_team.empty:
+        st.warning("No data available for this season yet.")
+        st.stop()
+    for game_idx, game in enumerate(games_ml):
+        home_raw = game["home"]
+        away_raw = game["away"]
+        home = ABBREV_MAP.get(home_raw, home_raw)
+        away = ABBREV_MAP.get(away_raw, away_raw)
+        event_id = game["event_id"]
+        status = game.get("status", "")
+        # Rest days
+        rest_home = get_rest_days(home, logs_team, ml_date)
+        rest_away = get_rest_days(away, logs_team, ml_date)
+        rest_diff = rest_home - rest_away
+        # Team stats
+        ortg_home = float(team_ortg.get(home, 110.0))
+        drtg_home = float(team_drtg.get(home, 110.0))
+        nrtg_home = float(team_nrtg.get(home, 0.0))
+        ortg_away = float(team_ortg.get(away, 110.0))
+        drtg_away = float(team_drtg.get(away, 110.0))
+        nrtg_away = float(team_nrtg.get(away, 0.0))
+        poss_home = float(team_poss.get(home, 98.0))
+        poss_away = float(team_poss.get(away, 98.0))
+        proj_possessions = (poss_home + poss_away) / 2.0
+        # Injuries
+        summary = get_espn_game_summary(event_id)
+        inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
+        nrtg_home_adj = nrtg_home + adjust_home_nrtg
+        nrtg_away_adj = nrtg_away + adjust_away_nrtg
+        nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
+        # Margin projection
+        hca = 2.7
+        est_margin_base = round(nrtg_diff_adj + hca, 1)
+        ml_margin = est_margin_base
+        if margin_model is not None:
+            ortg_diff = ortg_home - ortg_away
+            drtg_diff = drtg_home - drtg_away
+            pace_avg = proj_possessions
+            feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
+            xgb_margin = margin_model.predict(feat_vec)[0]
+            ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
+        est_margin = round(ml_margin, 1)
+        est_spread_home = round(-est_margin, 1)
+        win_prob_home = 1 / (1 + np.exp(-est_margin / 7.5))
+        win_prob_away = 1 - win_prob_home
+        ml_home = prob_to_ml(win_prob_home)
+        ml_away = prob_to_ml(win_prob_away)
+        # Total projection
+        ortg_home_total = ortg_home + adjust_home_ortg
+        ortg_away_total = ortg_away + adjust_away_ortg
+        drtg_home_total = drtg_home + adjust_home_drtg
+        drtg_away_total = drtg_away + adjust_home_drtg
+        exp_pts_home = ((ortg_home_total + drtg_away_total) / 2.0) * (proj_possessions / 100.0)
+        exp_pts_away = ((ortg_away_total + drtg_home_total) / 2.0) * (proj_possessions / 100.0)
+        projected_total_base = round(exp_pts_home + exp_pts_away, 1)
+        projected_total = projected_total_base
+        if total_model is not None:
+            total_feat = [ortg_home, ortg_away, drtg_home, drtg_away, proj_possessions, adjust_home_ortg, adjust_away_ortg, rest_diff]
+            xgb_total = total_model.predict(np.array([total_feat]))[0]
+            projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
+        projected_total = round(projected_total, 1)
+        # Render compact predictions
+        st.markdown(f"### {away} @ {home} ({status})")
+        projected_html = textwrap.dedent(f"""
+<div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;'>
+  <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
+    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Spread</div>
+    <div style='font-size:1.1rem; font-weight:700;'>{est_spread_home:+.1f}</div>
+  </div>
+  <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
+    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Total</div>
+    <div style='font-size:1.1rem; font-weight:700;'>{projected_total:.1f}</div>
+  </div>
+  <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
+    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Win Prob</div>
+    <div style='font-size:0.9rem;'>{home}: {win_prob_home*100:.0f}%<br>{away}: {win_prob_away*100:.0f}%</div>
+  </div>
+  <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
+    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Fair ML</div>
+    <div style='font-size:0.9rem;'>{home}: {ml_home}<br>{away}: {ml_away}</div>
+  </div>
 </div>
-"""
-    st.markdown(game_header_html, unsafe_allow_html=True); st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    season = get_current_season_str(); logs_team = load_enhanced_team_logs(season)
-    player_impacts = load_player_impact(season); league_logs_upper = load_league_player_logs_upper(season)
-    if logs_team.empty: st.warning("No data available for this season yet."); st.stop()
-    margin_model = train_margin_model(season); total_model = train_total_model(season)
-    team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean(); team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
-    team_nrtg = team_ortg - team_drtg
-    ortg_home = float(team_ortg.get(home, 110.0)); drtg_home = float(team_drtg.get(home, 110.0)); nrtg_home = float(team_nrtg.get(home, 0.0))
-    ortg_away = float(team_ortg.get(away, 110.0)); drtg_away = float(team_drtg.get(away, 110.0)); nrtg_away = float(team_nrtg.get(away, 0.0))
-    rest_home = get_rest_days(home, logs_team, ml_date); rest_away = get_rest_days(away, logs_team, ml_date); rest_diff = rest_home - rest_away
-    summary = get_espn_game_summary(event_id)
-    inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
-    nrtg_home_adj = nrtg_home + adjust_home_nrtg; nrtg_away_adj = nrtg_away + adjust_away_nrtg; nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
-    hca = 2.7; est_margin_base = round(nrtg_diff_adj + hca, 1)
-    ml_margin = est_margin_base
-    if margin_model is not None:
-        ortg_diff = ortg_home - ortg_away; drtg_diff = drtg_home - drtg_away
-        pace_avg = (logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(home, 98.0) + logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean().get(away, 98.0)) / 2
-        feat_vec = np.array([[ortg_diff, drtg_diff, pace_avg, adjust_home_nrtg, adjust_away_nrtg, hca, rest_diff]])
-        xgb_margin = margin_model.predict(feat_vec)[0]; ml_margin = 0.5 * est_margin_base + 0.5 * xgb_margin
-    est_margin = round(ml_margin, 1); est_spread_home = round(-est_margin, 1)
-    win_prob_home = 1 / (1 + np.exp(-(est_margin) / 7.5)); win_prob_away = 1 - win_prob_home
-    ml_home = prob_to_ml(win_prob_home); ml_away = prob_to_ml(win_prob_away)
-    team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean(); poss_home = float(team_poss.get(home, 98.0)); poss_away = float(team_poss.get(away, 98.0))
-    proj_possessions = (poss_home + poss_away) / 2.0
-    ortg_home_total = ortg_home + adjust_home_ortg; ortg_away_total = ortg_away + adjust_away_ortg
-    drtg_home_total = drtg_home + adjust_home_drtg; drtg_away_total = drtg_away + adjust_away_drtg
-    exp_pts_home = ((ortg_home_total + drtg_away_total) / 2.0) * (proj_possessions / 100.0)
-    exp_pts_away = ((ortg_away_total + drtg_home_total) / 2.0) * (proj_possessions / 100.0)
-    projected_total_base = round(exp_pts_home + exp_pts_away, 1)
-    projected_total = projected_total_base
-    if total_model is not None:
-        total_feat = [ortg_home, ortg_away, drtg_home, drtg_away, proj_possessions, adjust_home_ortg, adjust_away_ortg, rest_diff]
-        xgb_total = total_model.predict(np.array([total_feat]))[0]; projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
-    projected_total = round(projected_total, 1)
-    st.markdown("### 📊 Game Predictions")
-    projected_html = textwrap.dedent(f"""
-<div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;'>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Projected Spread</div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(home)} <span style='margin-left:4px; font-size:1.2rem; font-weight:700;'>{est_spread_home:+.1f}</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Projected Total</div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      <span style='font-size:1.2rem; font-weight:700;'>{projected_total:.1f}</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Model Win Probability</div>
-    <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-      {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_home*100:.1f}%</span>
-    </div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {win_prob_away*100:.1f}%</span>
-    </div>
-  </div>
-  <div style='border:1px solid #333; padding:12px; border-radius:8px; background:#1e1e1e;'>
-    <div style='margin-bottom:8px; font-weight:600;'>Model Moneyline (Fair Odds)</div>
-    <div style='display:flex; align-items:center; justify-content:center; margin-bottom:2px;'>
-      {team_html(home)} <span style='margin-left:4px; font-weight:600;'>: {ml_home}</span>
-    </div>
-    <div style='display:flex; align-items:center; justify-content:center;'>
-      {team_html(away)} <span style='margin-left:4px; font-weight:600;'>: {ml_away}</span>
-    </div>
-  </div>
-</div>
-""").strip()
-    st.markdown(projected_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    st.markdown("### 🧠 Team Strength Model (Efficiency Ratings)")
-    strength_html = textwrap.dedent(f"""
+""")
+        st.markdown(projected_html, unsafe_allow_html=True)
+        with st.expander(f"Expand: Efficiencies & Injuries ({len(inj_home) + len(inj_away)} total)"):
+            # Team strengths
+            strength_html = textwrap.dedent(f"""
 <div style='margin-top:10px;'>
   <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
-    <div style='margin-left:10px;'>
-      <div style='font-weight:600; margin-bottom:8px;'>Home Team ({home})</div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
+    <div>
+      <div style='font-weight:600; margin-bottom:8px;'>Home: {home}</div>
+      <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
+      <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
+      <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
     </div>
-    <div style='margin-left:10px;'>
-      <div style='font-weight:600; margin-bottom:8px;'>Away Team ({away})</div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:2px;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
-      <div style='display:flex; align-items:center; margin-bottom:4px;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
+    <div>
+      <div style='font-weight:600; margin-bottom:8px;'>Away: {away}</div>
+      <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
+      <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
+      <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
     </div>
   </div>
-  <div style='margin-top:10px; margin-left:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Net Rating Differential (Adjusted): {nrtg_diff_adj:+.1f} | Projected Margin (w/ HCA): {est_margin:+.1f}</div>
+  <div style='margin-top:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Diff (Adj): {nrtg_diff_adj:+.1f} | Margin (w/ HCA): {est_margin:+.1f}</div>
 </div>
-""").strip()
-    st.markdown(strength_html, unsafe_allow_html=True)
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    st.markdown("### 🩹 Injury Adjustments")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**{home} Out ({len(inj_home)} players):**")
-        if inj_home:
-            for i in inj_home:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
-        else: st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_home_nrtg:+.1f} | Off/Def Adjustments (totals): ORTG {adjust_home_ortg:+.1f} | DRTG {adjust_home_drtg:+.1f}*")
-    with col2:
-        st.write(f"**{away} Out ({len(inj_away)} players):**")
-        if inj_away:
-            for i in inj_away:
-                ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
-                st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
-        else: st.write("No key injuries.")
-        st.write(f"*NRTG Adjustment: {adjust_away_nrtg:+.1f} | Off/Def Adjustments (totals): ORTG {adjust_away_ortg:+.1f} | DRTG {adjust_away_drtg:+.1f}*")
-    st.markdown("<hr style='border-color:#333;'/>", unsafe_allow_html=True)
-    st.markdown("### 📑 Compare With Sportsbook Odds")
-    col1, col2 = st.columns(2)
-    with col1: user_ml_home = st.number_input(f"{home} ML", value=0, step=10); user_spread_home = st.number_input(f"{home} Spread Odds", value=0, step=10)
-    with col2: user_ml_away = st.number_input(f"{away} ML", value=0, step=10); user_spread_away = st.number_input(f"{away} Spread Odds", value=0, step=10)
-    def edge(model_prob, book_odds):
-        book_prob = american_to_implied(book_odds)
-        return (model_prob - book_prob) * 100 if book_prob is not None else None
-    edge_home_ml = edge(win_prob_home, user_ml_home); edge_away_ml = edge(win_prob_away, user_ml_away)
-    def edge_line(team, model_prob, fair, book, ev):
-        ev_str = "—" if ev is None else f"{ev:.2f}%"; color = "#00c896" if ev is not None and ev > 0 else "#e05a5a"
-        return textwrap.dedent(f"""
-<div style="padding:12px;border:1px solid #333;border-radius:10px; margin-bottom:12px;background:#1e1e1e;">
-  <div style="font-size:1rem;font-weight:700; margin-bottom:6px;">{team_html(team)}</div>
-  <div style="font-size:0.9rem;color:#ddd;">
-    Model Win Prob: {model_prob*100:.1f}% <br>
-    Fair Odds: {fair} <br>
-    Sportsbook Odds: {book} <br>
-    <span style="color:{color};font-weight:700;">EV: {ev_str}</span>
-  </div>
-</div>
-""").strip()
-    st.markdown("### 💰 EV Analysis (Moneyline)")
-    st.markdown(edge_line(home, win_prob_home, ml_home, user_ml_home, edge_home_ml), unsafe_allow_html=True)
-    st.markdown(edge_line(away, win_prob_away, ml_away, user_ml_away, edge_away_ml), unsafe_allow_html=True)
+""")
+            st.markdown(strength_html, unsafe_allow_html=True)
+            # Injuries
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**{home} Out ({len(inj_home)} players):**")
+                if inj_home:
+                    for i in inj_home:
+                        ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                        st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
+                else:
+                    st.write("No key injuries.")
+                st.write(f"*NRTG Adj: {adjust_home_nrtg:+.1f} | ORTG/DRTG Adj: {adjust_home_ortg:+.1f}/{adjust_home_drtg:+.1f}*")
+            with col2:
+                st.write(f"**{away} Out ({len(inj_away)} players):**")
+                if inj_away:
+                    for i in inj_away:
+                        ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                        st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
+                else:
+                    st.write("No key injuries.")
+                st.write(f"*NRTG Adj: {adjust_away_nrtg:+.1f} | ORTG/DRTG Adj: {adjust_away_ortg:+.1f}/{adjust_away_drtg:+.1f}*")
+        if game_idx < len(games_ml) - 1:
+            st.markdown("---")
+    # Optional: Add EV inputs at bottom if desired, but per-game would be heavy—consider a separate section
