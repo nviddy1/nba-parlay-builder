@@ -615,18 +615,181 @@ def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     logs = logs.copy()
     logs["PLAYER_NAME_UPPER"] = logs["PLAYER_NAME"].str.upper() if "PLAYER_NAME" in logs.columns else ""
     return logs
+def compute_team_ortg_delta(team_abbr: str, player_name_upper: str, logs_team: pd.DataFrame, league_logs_upper: pd.DataFrame, recency_decay: float = 0.1, long_absence_threshold: int = 30, decay_rate: float = 0.02) -> float:
+    if logs_team.empty or league_logs_upper.empty:
+        return 0.0
+    team_games = logs_team[logs_team["TEAM_ABBREVIATION"] == team_abbr].copy()
+    if team_games.empty:
+        return 0.0
+    team_total_games = team_games["GAME_ID"].nunique()
+    min_games_threshold = max(1, int(0.1 * team_total_games))
+    plog = league_logs_upper[(league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)]
+    if plog.empty:
+        return 0.0
+    games_with = set(plog["GAME_ID"].unique())
+    n_with = len(games_with)
+    if n_with < min_games_threshold:
+        return 0.0
+    with_df = team_games[team_games["GAME_ID"].isin(games_with)]
+    without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
+    n_without = without_df["GAME_ID"].nunique()
+    if n_without < 3:
+        return 0.0
+    # Assume GAME_DATE is datetime
+    today = pd.Timestamp.now().date()  # Or use game_date from context
+    # Get unique dates for weighting
+    with_dates = with_df["GAME_DATE"].dt.date.unique()
+    without_dates = without_df["GAME_DATE"].dt.date.unique()
+    # Days since (reverse for recency: recent = low days_since)
+    days_since_with = [(today - d).days for d in with_dates]
+    days_since_without = [(today - d).days for d in without_dates]
+    # Recency weights (higher for lower days_since)
+    recency_weights_with = np.exp(-recency_decay * np.array(days_since_with))
+    recency_weights_without = np.exp(-recency_decay * np.array(days_since_without))
+    # Weighted ORTG
+    ortg_with_weighted = np.average(with_df["ortg"], weights=np.repeat(recency_weights_with, len(with_df)//len(with_dates)))
+    ortg_without_weighted = np.average(without_df["ortg"], weights=np.repeat(recency_weights_without, len(without_df)//len(without_dates)))
+    raw_delta = ortg_without_weighted - ortg_with_weighted
+    # Long-term absence decay
+    avg_days_since_with = np.mean(days_since_with)
+    absence_decay = 1.0
+    if avg_days_since_with > long_absence_threshold:
+        absence_decay = np.exp(-decay_rate * (avg_days_since_with - long_absence_threshold))
+    # Sample size weights
+    weight_with = min(n_with / 15.0, 1.0)
+    weight_without = min(n_without / 15.0, 1.0)
+    slack_factor = 1.0 - (0.5 * (1 - weight_without))
+    overall_weight = (weight_with + weight_without) / 2
+    return float(raw_delta * overall_weight * slack_factor * absence_decay)
+
+def compute_team_drtg_delta(team_abbr: str, player_name_upper: str, logs_team: pd.DataFrame, league_logs_upper: pd.DataFrame, recency_decay: float = 0.1, long_absence_threshold: int = 30, decay_rate: float = 0.02) -> float:
+    if logs_team.empty or league_logs_upper.empty:
+        return 0.0
+    team_games = logs_team[logs_team["TEAM_ABBREVIATION"] == team_abbr].copy()
+    if team_games.empty:
+        return 0.0
+    team_total_games = team_games["GAME_ID"].nunique()
+    min_games_threshold = max(1, int(0.1 * team_total_games))
+    plog = league_logs_upper[(league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)]
+    if plog.empty:
+        return 0.0
+    games_with = set(plog["GAME_ID"].unique())
+    n_with = len(games_with)
+    if n_with < min_games_threshold:
+        return 0.0
+    with_df = team_games[team_games["GAME_ID"].isin(games_with)]
+    without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
+    n_without = without_df["GAME_ID"].nunique()
+    if n_without < 3:
+        return 0.0
+    today = pd.Timestamp.now().date()
+    with_dates = with_df["GAME_DATE"].dt.date.unique()
+    without_dates = without_df["GAME_DATE"].dt.date.unique()
+    days_since_with = [(today - d).days for d in with_dates]
+    days_since_without = [(today - d).days for d in without_dates]
+    recency_weights_with = np.exp(-recency_decay * np.array(days_since_with))
+    recency_weights_without = np.exp(-recency_decay * np.array(days_since_without))
+    drtg_with_weighted = np.average(with_df["drtg"], weights=np.repeat(recency_weights_with, len(with_df)//len(with_dates)))
+    drtg_without_weighted = np.average(without_df["drtg"], weights=np.repeat(recency_weights_without, len(without_df)//len(without_dates)))
+    raw_delta = drtg_without_weighted - drtg_with_weighted
+    avg_days_since_with = np.mean(days_since_with)
+    absence_decay = 1.0
+    if avg_days_since_with > long_absence_threshold:
+        absence_decay = np.exp(-decay_rate * (avg_days_since_with - long_absence_threshold))
+    weight_with = min(n_with / 15.0, 1.0)
+    weight_without = min(n_without / 15.0, 1.0)
+    slack_factor = 1.0 - (0.5 * (1 - weight_without))
+    overall_weight = (weight_with + weight_without) / 2
+    return float(raw_delta * overall_weight * slack_factor * absence_decay)
+
+def get_player_impact_improved(name_upper: str, team_abbr: str, player_impacts: pd.DataFrame, team_grouped: dict, recency_decay: float = 0.1) -> float:
+    if player_impacts.empty:
+        return 1.0
+    impact = player_impacts.set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"].get(name_upper, 1.0)
+    gp = player_impacts.set_index("PLAYER_NAME_UPPER")["GP"].get(name_upper, 0)
+    team_games = team_grouped.get(team_abbr, pd.DataFrame())
+    team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
+    min_games_threshold = max(1, int(0.1 * team_total_games))
+    if gp < min_games_threshold:
+        return 0.0
+    # Recency adjustment for impact (weight recent games)
+    today = pd.Timestamp.now().date()
+    recent_games = team_games.tail(10)  # Last 10 team games
+    days_since_recent = [(today - d.date()).days for d in recent_games['GAME_DATE']]
+    recency_weights = np.exp(-recency_decay * np.array(days_since_recent))
+    recent_impact = np.average([impact] * len(recent_games), weights=recency_weights)  # Placeholder; ideally per-game impact
+    return float(impact * np.mean(recency_weights))  # Discount if old data
 def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: date, player_impacts: pd.DataFrame | None, logs_team: pd.DataFrame, league_logs_upper: pd.DataFrame) -> tuple:
     inj_home, inj_away = [], []
     adjust_home_nrtg, adjust_away_nrtg = 0.0, 0.0
     adjust_home_ortg, adjust_away_ortg = 0.0, 0.0
     adjust_home_drtg, adjust_away_drtg = 0.0, 0.0
-    injuries_top = summary.get("injuries", []); abbr_map = ABBREV_MAP
+    injuries_top = summary.get("injuries", [])
+    abbr_map = ABBREV_MAP
     if player_impacts is not None and not player_impacts.empty:
         impact_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"].to_dict()
         gp_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["GP"].to_dict()
-    else: impact_lookup, gp_lookup = {}, {}
-    impact_scale_nrtg = 1.5; matchup_factor_home = matchup_factor_away = 1.0
+    else:
+        impact_lookup, gp_lookup = {}, {}
+    impact_scale_nrtg = 1.5
+    matchup_factor_home = matchup_factor_away = 1.0
     team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
+    def get_player_impact(name_upper: str, team_abbr: str) -> float:
+        return get_player_impact_improved(name_upper, team_abbr, player_impacts, team_grouped)
+    def compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
+        return compute_team_ortg_delta(team_abbr, player_name_upper, logs_team, league_logs_upper)
+    def compute_team_drtg_delta(team_abbr: str, player_name_upper: str) -> float:
+        return compute_team_drtg_delta(team_abbr, player_name_upper, logs_team, league_logs_upper)
+    for team_inj_item in injuries_top:
+        team_abbr_api = team_inj_item["team"]["abbreviation"]
+        team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
+        team_inj_list, team_nrtg_adj, team_ortg_adj, team_drtg_adj = [], 0.0, 0.0, 0.0
+        rest_multiplier = 1.0
+        matchup_factor = matchup_factor_home if team_abbr == home_abbr else matchup_factor_away
+        for inj in team_inj_item.get("injuries", []):
+            athlete = inj["athlete"]
+            player_name = athlete["displayName"]
+            player_name_upper = player_name.upper()
+            details = inj.get("details", {})
+            fantasy_status = details.get("fantasyStatus", {}).get("description", "")
+            injury_type = details.get("type", "")
+            detail = details.get("detail", "")
+            full_injury = f"{injury_type} ({detail})" if detail else injury_type
+            return_date_str = details.get("returnDate")
+            return_date = None
+            if return_date_str:
+                try:
+                    return_date = date.fromisoformat(return_date_str)
+                except:
+                    pass
+            is_out = return_date is None or return_date > game_date
+            if not is_out:
+                continue
+            status_lower = fantasy_status.lower()
+            status_weight = 1.0 if "out" in status_lower else (0.5 if any(term in status_lower for term in ["day-to-day", "questionable", "gtd"]) else 0.75)
+            player_importance = get_player_impact(player_name_upper, team_abbr)
+            base_adjust = -impact_scale_nrtg * player_importance * status_weight
+            team_nrtg_adj += base_adjust * rest_multiplier
+            ortg_delta = compute_team_ortg_delta(team_abbr, player_name_upper)
+            team_ortg_adj += ortg_delta * status_weight
+            drtg_delta = compute_team_drtg_delta(team_abbr, player_name_upper)
+            team_drtg_adj += drtg_delta * status_weight
+            team_nrtg_adj += (ortg_delta - drtg_delta) * status_weight * rest_multiplier
+            team_inj_list.append({"name": player_name, "status": fantasy_status, "injury": full_injury, "return_date": return_date, "impact_score": round(player_importance, 2), "status_weight": status_weight, "ortg_delta": round(ortg_delta, 2), "drtg_delta": round(drtg_delta, 2)})
+        team_nrtg_adj = float(np.clip(team_nrtg_adj, -12, 12))
+        team_ortg_adj = float(np.clip(team_ortg_adj, -10, 10))
+        team_drtg_adj = float(np.clip(team_drtg_adj, -10, 10))
+        if team_abbr == home_abbr:
+            inj_home = team_inj_list
+            adjust_home_nrtg = team_nrtg_adj
+            adjust_home_ortg = team_ortg_adj
+            adjust_home_drtg = team_drtg_adj
+        elif team_abbr == away_abbr:
+            inj_away = team_inj_list
+            adjust_away_nrtg = team_nrtg_adj
+            adjust_away_ortg = team_ortg_adj
+            adjust_away_drtg = team_drtg_adj
+    return inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg
     def get_player_impact(name_upper: str, team_abbr: str) -> float:
         if not impact_lookup: return 1.0
         gp = gp_lookup.get(name_upper, 0)
