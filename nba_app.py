@@ -246,14 +246,11 @@ def prob_to_american(p: float):
     dec = 1.0/p
     return f"+{int(round((dec-1)*100))}" if dec >= 2.0 else f"-{int(round(100/(dec-1)))}"
 def prob_to_ml(p):
-    if np.isnan(p) or p <= 0 or p >= 1:
+    if p <= 0 or p >= 1:
         return "N/A"
-    dec = 1.0 / p
+    dec = 1 / p
     if dec >= 2:
         return f"+{int((dec - 1) * 100)}"
-    if dec - 1 <= 0:  # Safety for floating-point underflow near 1.0
-        return "-9999"  # Heavy favorite; adjust as needed (or "N/A")
-    return f"-{int(100 / (dec - 1))}"
     return f"-{int(100 / (dec - 1))}"
 def fmt_half(x: float | int) -> str:
     try: return f"{float(x):.1f}".rstrip("0").rstrip(".")
@@ -618,42 +615,6 @@ def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     logs = logs.copy()
     logs["PLAYER_NAME_UPPER"] = logs["PLAYER_NAME"].str.upper() if "PLAYER_NAME" in logs.columns else ""
     return logs
-def compute_team_ortg_delta(team_abbr: str, player_name_upper: str, team_games: pd.DataFrame, league_logs_upper: pd.DataFrame, game_date: date) -> float:
-    if team_games.empty or league_logs_upper.empty: return 0.0
-    # Limit to last 10 games for recent form
-    team_games_recent = team_games.sort_values('GAME_DATE').tail(10).reset_index(drop=True)
-    if team_games_recent.empty: return 0.0
-    team_total_games = team_games_recent["GAME_ID"].nunique()
-    min_games_threshold = max(1, int(0.1 * team_total_games))
-    plog = league_logs_upper[(league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)]
-    if plog.empty: return 0.0
-    games_with = set(plog["GAME_ID"].unique()); n_with = len(games_with)
-    if n_with < min_games_threshold: return 0.0
-    with_df = team_games_recent[team_games_recent["GAME_ID"].isin(games_with)]; without_df = team_games_recent[~team_games_recent["GAME_ID"].isin(games_with)]
-    n_without = without_df["GAME_ID"].nunique()
-    if n_without < 3: return 0.0
-    ortg_with = with_df["ortg"].mean(); ortg_without = without_df["ortg"].mean()
-    raw_delta = ortg_without - ortg_with
-    slack_factor = 1.0 - (0.5 * (1 - min(n_without / 15.0, 1.0))); weight = min(n_without / 15.0, 1.0)
-    return float(raw_delta * weight * slack_factor)
-def compute_team_drtg_delta(team_abbr: str, player_name_upper: str, team_games: pd.DataFrame, league_logs_upper: pd.DataFrame, game_date: date) -> float:
-    if team_games.empty or league_logs_upper.empty: return 0.0
-    # Limit to last 10 games for recent form
-    team_games_recent = team_games.sort_values('GAME_DATE').tail(10).reset_index(drop=True)
-    if team_games_recent.empty: return 0.0
-    team_total_games = team_games_recent["GAME_ID"].nunique()
-    min_games_threshold = max(1, int(0.1 * team_total_games))
-    plog = league_logs_upper[(league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)]
-    if plog.empty: return 0.0
-    games_with = set(plog["GAME_ID"].unique()); n_with = len(games_with)
-    if n_with < min_games_threshold: return 0.0
-    with_df = team_games_recent[team_games_recent["GAME_ID"].isin(games_with)]; without_df = team_games_recent[~team_games_recent["GAME_ID"].isin(games_with)]
-    n_without = without_df["GAME_ID"].nunique()
-    if n_without < 3: return 0.0
-    drtg_with = with_df["drtg"].mean(); drtg_without = without_df["drtg"].mean()
-    raw_delta = drtg_without - drtg_with
-    slack_factor = 1.0 - (0.5 * (1 - min(n_without / 15.0, 1.0))); weight = min(n_without / 15.0, 1.0)
-    return float(raw_delta * weight * slack_factor)
 def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: date, player_impacts: pd.DataFrame | None, logs_team: pd.DataFrame, league_logs_upper: pd.DataFrame) -> tuple:
     inj_home, inj_away = [], []
     adjust_home_nrtg, adjust_away_nrtg = 0.0, 0.0
@@ -663,40 +624,51 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
     if player_impacts is not None and not player_impacts.empty:
         impact_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["IMPACT_SCORE"].to_dict()
         gp_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["GP"].to_dict()
-        # Also create a dict for quick NET_RATING lookup
-        net_lookup = player_impacts.set_index("PLAYER_NAME_UPPER")["NET_RATING"].to_dict()
-    else: 
-        impact_lookup, gp_lookup, net_lookup = {}, {}, {}
+    else: impact_lookup, gp_lookup = {}, {}
     impact_scale_nrtg = 1.5; matchup_factor_home = matchup_factor_away = 1.0
     team_grouped = dict(tuple(logs_team.groupby("TEAM_ABBREVIATION"))) if not logs_team.empty else {}
     def get_player_impact(name_upper: str, team_abbr: str) -> float:
-        if league_logs_upper.empty: return 1.0
+        if not impact_lookup: return 1.0
+        gp = gp_lookup.get(name_upper, 0)
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
-        if team_games.empty: return 1.0
-        # Limit to last 10 team games for recent impact
-        recent_team_games = team_games.sort_values('GAME_DATE').tail(10)
-        if recent_team_games.empty: return 1.0
-        recent_plog = league_logs_upper[
-            (league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & 
-            (league_logs_upper["PLAYER_NAME_UPPER"] == name_upper) & 
-            (league_logs_upper["GAME_ID"].isin(recent_team_games["GAME_ID"]))
-        ]
-        recent_gp = len(recent_plog)
-        if recent_gp < 3: return 0.0  # Insufficient recent games
-        recent_mins = recent_plog["MIN_NUM"].mean()
-        minute_factor = recent_mins / 24.0
-        # Use season NET_RATING for net_factor (as per-game net is complex to compute from logs)
-        season_net = net_lookup.get(name_upper, 0)
-        net_factor = 1 + (season_net / 20.0)
-        impact = minute_factor * net_factor
-        return float(np.clip(impact, 0.2, 2.0))
-    # RENAMED LOCAL FUNCTIONS TO AVOID NAME CONFLICT
-    def _local_compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
+        team_total_games = team_games["GAME_ID"].nunique() if not team_games.empty else 0
+        min_games_threshold = max(1, int(0.1 * team_total_games))
+        if gp < min_games_threshold: return 0.0
+        return float(impact_lookup.get(name_upper, 1.0))
+    def compute_team_ortg_delta(team_abbr: str, player_name_upper: str) -> float:
+        if logs_team.empty or league_logs_upper.empty: return 0.0
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
-        return compute_team_ortg_delta(team_abbr, player_name_upper, team_games, league_logs_upper, game_date)
-    def _local_compute_team_drtg_delta(team_abbr: str, player_name_upper: str) -> float:
+        if team_games.empty: return 0.0
+        team_total_games = team_games["GAME_ID"].nunique()
+        min_games_threshold = max(1, int(0.1 * team_total_games))
+        plog = league_logs_upper[(league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)]
+        if plog.empty: return 0.0
+        games_with = set(plog["GAME_ID"].unique()); n_with = len(games_with)
+        if n_with < min_games_threshold: return 0.0
+        with_df = team_games[team_games["GAME_ID"].isin(games_with)]; without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
+        n_without = without_df["GAME_ID"].nunique()
+        if n_without < 3: return 0.0
+        ortg_with = with_df["ortg"].mean(); ortg_without = without_df["ortg"].mean()
+        raw_delta = ortg_without - ortg_with
+        slack_factor = 1.0 - (0.5 * (1 - min(n_without / 15.0, 1.0))); weight = min(n_without / 15.0, 1.0)
+        return float(raw_delta * weight * slack_factor)
+    def compute_team_drtg_delta(team_abbr: str, player_name_upper: str) -> float:
+        if logs_team.empty or league_logs_upper.empty: return 0.0
         team_games = team_grouped.get(team_abbr, pd.DataFrame())
-        return compute_team_drtg_delta(team_abbr, player_name_upper, team_games, league_logs_upper, game_date)
+        if team_games.empty: return 0.0
+        team_total_games = team_games["GAME_ID"].nunique()
+        min_games_threshold = max(1, int(0.1 * team_total_games))
+        plog = league_logs_upper[(league_logs_upper["TEAM_ABBREVIATION"] == team_abbr) & (league_logs_upper["PLAYER_NAME_UPPER"] == player_name_upper)]
+        if plog.empty: return 0.0
+        games_with = set(plog["GAME_ID"].unique()); n_with = len(games_with)
+        if n_with < min_games_threshold: return 0.0
+        with_df = team_games[team_games["GAME_ID"].isin(games_with)]; without_df = team_games[~team_games["GAME_ID"].isin(games_with)]
+        n_without = without_df["GAME_ID"].nunique()
+        if n_without < 3: return 0.0
+        drtg_with = with_df["drtg"].mean(); drtg_without = without_df["drtg"].mean()
+        raw_delta = drtg_without - drtg_with
+        slack_factor = 1.0 - (0.5 * (1 - min(n_without / 15.0, 1.0))); weight = min(n_without / 15.0, 1.0)
+        return float(raw_delta * weight * slack_factor)
     for team_inj_item in injuries_top:
         team_abbr_api = team_inj_item["team"]["abbreviation"]; team_abbr = abbr_map.get(team_abbr_api, team_abbr_api)
         team_inj_list, team_nrtg_adj, team_ortg_adj, team_drtg_adj = [], 0.0, 0.0, 0.0
@@ -716,9 +688,8 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
             player_importance = get_player_impact(player_name_upper, team_abbr)
             base_adjust = -impact_scale_nrtg * player_importance * status_weight
             team_nrtg_adj += base_adjust * rest_multiplier
-            # USE RENAMED LOCAL FUNCTIONS
-            ortg_delta = _local_compute_team_ortg_delta(team_abbr, player_name_upper); team_ortg_adj += ortg_delta * status_weight
-            drtg_delta = _local_compute_team_drtg_delta(team_abbr, player_name_upper); team_drtg_adj += drtg_delta * status_weight
+            ortg_delta = compute_team_ortg_delta(team_abbr, player_name_upper); team_ortg_adj += ortg_delta * status_weight
+            drtg_delta = compute_team_drtg_delta(team_abbr, player_name_upper); team_drtg_adj += drtg_delta * status_weight
             team_nrtg_adj += (ortg_delta - drtg_delta) * status_weight * rest_multiplier
             team_inj_list.append({"name": player_name, "status": fantasy_status, "injury": full_injury, "return_date": return_date, "impact_score": round(player_importance, 2), "status_weight": status_weight, "ortg_delta": round(ortg_delta, 2), "drtg_delta": round(drtg_delta, 2)})
         team_nrtg_adj = float(np.clip(team_nrtg_adj, -12, 12)); team_ortg_adj = float(np.clip(team_ortg_adj, -10, 10)); team_drtg_adj = float(np.clip(team_drtg_adj, -10, 10))
@@ -1183,15 +1154,19 @@ with tab_ml:
         st.warning("No games found for this date.")
         st.stop()
     season = get_current_season_str()
-    @st.cache_data(ttl=1800) # Cache for 30min
+    @st.cache_data(ttl=1800)  # Cache for 30min
     def get_game_data(season):
         logs_team = load_enhanced_team_logs(season)
         player_impacts = load_player_impact(season)
         league_logs_upper = load_league_player_logs_upper(season)
         margin_model = train_margin_model(season)
         total_model = train_total_model(season)
-        return logs_team, player_impacts, league_logs_upper, margin_model, total_model
-    logs_team, player_impacts, league_logs_upper, margin_model, total_model = get_game_data(season)
+        team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+        team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+        team_nrtg = team_ortg - team_drtg
+        team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean()
+        return logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss
+    logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss = get_game_data(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
         st.stop()
@@ -1202,24 +1177,21 @@ with tab_ml:
         away = ABBREV_MAP.get(away_raw, away_raw)
         event_id = game["event_id"]
         status = game.get("status", "")
-        # Rest days (using full logs)
+        # Rest days
         rest_home = get_rest_days(home, logs_team, ml_date)
         rest_away = get_rest_days(away, logs_team, ml_date)
         rest_diff = rest_home - rest_away
-        # Last 10 games for each team
-        last10_home = logs_team[logs_team['TEAM_ABBREVIATION'] == home].sort_values('GAME_DATE', ascending=False).head(10)
-        last10_away = logs_team[logs_team['TEAM_ABBREVIATION'] == away].sort_values('GAME_DATE', ascending=False).head(10)
-        # Team stats from last 10
-        ortg_home = float(last10_home['ortg'].mean()) if not last10_home.empty else 110.0
-        drtg_home = float(last10_home['drtg'].mean()) if not last10_home.empty else 110.0
-        nrtg_home = ortg_home - drtg_home
-        ortg_away = float(last10_away['ortg'].mean()) if not last10_away.empty else 110.0
-        drtg_away = float(last10_away['drtg'].mean()) if not last10_away.empty else 110.0
-        nrtg_away = ortg_away - drtg_away
-        poss_home = float(last10_home['poss'].mean()) if not last10_home.empty else 98.0
-        poss_away = float(last10_away['poss'].mean()) if not last10_away.empty else 98.0
+        # Team stats
+        ortg_home = float(team_ortg.get(home, 110.0))
+        drtg_home = float(team_drtg.get(home, 110.0))
+        nrtg_home = float(team_nrtg.get(home, 0.0))
+        ortg_away = float(team_ortg.get(away, 110.0))
+        drtg_away = float(team_drtg.get(away, 110.0))
+        nrtg_away = float(team_nrtg.get(away, 0.0))
+        poss_home = float(team_poss.get(home, 98.0))
+        poss_away = float(team_poss.get(away, 98.0))
         proj_possessions = (poss_home + poss_away) / 2.0
-        # Injuries (now using last 10 in delta computations via modified functions)
+        # Injuries
         summary = get_espn_game_summary(event_id)
         inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
         nrtg_home_adj = nrtg_home + adjust_home_nrtg
