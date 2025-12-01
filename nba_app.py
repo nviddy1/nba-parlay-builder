@@ -19,7 +19,6 @@ try:
 except ImportError:
     xgb = None
     XGB_AVAILABLE = False
-
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
     "BOS": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
@@ -52,12 +51,10 @@ TEAM_LOGOS = {
     "UTA": "https://a.espncdn.com/i/teamlogos/nba/500/utah.png",
     "WAS": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png"
 }
-
 ABBREV_MAP = {
     "GS": "GSW", "NO": "NOP", "UT": "UTA", "SA": "SAS", "LA": "LAL", "NY": "NYK", "WSH": "WAS",
     "GSW": "GSW", "NOP": "NOP", "UTA": "UTA", "SAS": "SAS", "LAL": "LAL", "NYK": "NYK", "WAS": "WAS"
 }
-
 TEAM_COLORS = {
     "ATL": "#E03A3E","BOS": "#007A33","BKN": "#000000","CHA": "#1D1160","CHI": "#CE1141",
     "CLE": "#860038","DAL": "#00538C","DEN": "#0E2240","DET": "#C8102E","GSW": "#1D428A",
@@ -66,15 +63,12 @@ TEAM_COLORS = {
     "OKC": "#007AC1","ORL": "#0077C0","PHI": "#006BB6","PHX": "#1D1160","POR": "#E03A3E",
     "SAC": "#5A2D81","SAS": "#C4CED4","TOR": "#CE1141","UTA": "#002B5C","WAS": "#002B5C"
 }
-
 TEAM_ABBRS = sorted(TEAM_COLORS.keys())
-
 STAT_LABELS = {
     "PTS": "Points", "REB": "Rebounds", "AST": "Assists", "STL": "Steals", "BLK": "Blocks",
     "FG3M": "3PM", "DOUBDOUB": "Doub Doub", "TRIPDOUB": "Trip Doub", "P+R": "P+R", "P+A": "P+A",
     "R+A": "R+A", "PRA": "PRA"
 }
-
 STAT_TOKENS = {
     "P": "PTS", "PTS": "PTS", "POINTS": "PTS", "R": "REB", "REB": "REB", "REBOUNDS": "REB",
     "A": "AST", "AST": "AST", "ASSISTS": "AST", "STL": "STL", "STEALS": "STL", "BLK": "BLK",
@@ -83,23 +77,18 @@ STAT_TOKENS = {
     "TRIPLEDOUBLE": "TRIPDOUB", "TD": "TRIPDOUB", "P+R": "P+R", "PR": "P+R", "P+A": "P+A",
     "PA": "P+A", "R+A": "R+A", "RA": "R+A", "PRA": "PRA"
 }
-
 NBA_CUP_DATES = pd.to_datetime([
     "2024-11-12", "2024-11-15", "2024-11-19", "2024-11-22", "2024-11-26", "2024-11-29",
     "2024-12-03", "2024-12-10", "2024-12-11", "2024-12-14", "2024-12-17",
     "2025-10-31", "2025-11-07", "2025-11-14", "2025-11-21", "2025-11-25", "2025-11-26",
     "2025-11-28", "2025-12-09", "2025-12-10", "2025-12-13", "2025-12-16"
 ])
-
 NORMALIZED_POS = {"PG": "PG", "G": "PG", "SG": "SG", "SF": "SF", "PF": "PF", "F": "PF", "C": "C"}
-
 POSITION_MAP = {}
-
 def get_espn_scoreboard(date):
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date}"
     r = requests.get(url)
     return r.json() if r.status_code == 200 else None
-
 def render_espn_banner(scoreboard):
     if not scoreboard or "events" not in scoreboard:
         st.warning("No games found for this date.")
@@ -176,7 +165,6 @@ def render_espn_banner(scoreboard):
             continue
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
-
 def extract_games_from_scoreboard(scoreboard):
     games = []
     if not scoreboard or "events" not in scoreboard: return games
@@ -196,22 +184,17 @@ def extract_games_from_scoreboard(scoreboard):
             games.append({"home": home_abbr, "away": away_abbr, "status": status, "event_id": ev["id"]})
         except: continue
     return games
-
 def get_player_headshot(player_id):
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{player_id}.png"
-
 st.set_page_config(page_icon="🏀", layout="wide")
 today = datetime.now().date()
 chosen_date = today.strftime("%Y%m%d")
-
 @st.cache_data(ttl=300)
 def fetch_scoreboard_cached(date_str):
     return get_espn_scoreboard(date_str)
-
 scoreboard = fetch_scoreboard_cached(chosen_date)
 render_espn_banner(scoreboard)
 st.markdown("<hr style='border-color:#333;'>", unsafe_allow_html=True)
-
 st.markdown("""
 <style>
 :root {--bg: #0e0f11; --text: #f9fafb; --muted: #9ca3af; --card: #1a1b1e; --border: #32353b; --accent: #00c896;}
@@ -236,7 +219,6 @@ thead th {border-bottom: 1px solid #374151 !important;}
 tbody td, thead th {padding: 8px 10px !important;}
 </style>
 """, unsafe_allow_html=True)
-
 @st.cache_data
 def get_all_player_names():
     try:
@@ -246,9 +228,7 @@ def get_all_player_names():
     except: pass
     all_p = players.get_players()
     return sorted(set(p["full_name"] for p in all_p if p.get("full_name")))
-
 PLAYER_LIST = get_all_player_names()
-
 def best_player_match(query: str) -> str:
     q = (query or "").strip()
     if not q: return ""
@@ -256,18 +236,15 @@ def best_player_match(query: str) -> str:
     if m: return m[0]
     m = process.extractOne(q, PLAYER_LIST, score_cutoff=60)
     return m[0] if m else ""
-
 def american_to_implied(odds: int | float | str):
     try: x = float(odds)
     except: return None
     if -99 < x < 100: return None
     return 100.0/(x+100.0) if x > 0 else abs(x)/(abs(x)+100.0)
-
 def prob_to_american(p: float):
     if p <= 0 or p >= 1: return "N/A"
     dec = 1.0/p
     return f"+{int(round((dec-1)*100))}" if dec >= 2.0 else f"-{int(round(100/(dec-1)))}"
-
 def prob_to_ml(p):
     if p <= 0 or p >= 1:
         return "N/A"
@@ -275,11 +252,9 @@ def prob_to_ml(p):
     if dec >= 2:
         return f"+{int((dec - 1) * 100)}"
     return f"-{int(100 / (dec - 1))}"
-
 def fmt_half(x: float | int) -> str:
     try: return f"{float(x):.1f}".rstrip("0").rstrip(".")
     except: return str(x)
-
 def parse_input_line(text: str):
     t = (text or "").strip()
     if not t: return None
@@ -319,19 +294,16 @@ def parse_input_line(text: str):
     name_tokens = [p for p in parts if (p.upper() not in banned and not p.replace(".", "", 1).lstrip("+-").isdigit())]
     player = best_player_match(" ".join(name_tokens).strip())
     return {"player": player, "dir": dir_token, "thr": float(thr), "stat": stat_code, "loc": loc, "range": "FULL", "odds": int(odds)}
-
 def get_player_id(full_name: str):
     if not full_name: return None
     res = players.find_players_by_full_name(full_name)
     return res[0]["id"] if res else None
-
 def to_minutes(val):
     try:
         s = str(val)
         if ":" in s: return int(s.split(":")[0])
         return int(float(s))
     except: return 0
-
 @st.cache_data
 def fetch_gamelog(player_id: int, seasons: list[str], include_playoffs: bool=False, only_playoffs: bool=False) -> pd.DataFrame:
     dfs = []
@@ -349,7 +321,6 @@ def fetch_gamelog(player_id: int, seasons: list[str], include_playoffs: bool=Fal
     df["MIN_NUM"] = df["MIN"].apply(to_minutes) if "MIN" in df.columns else 0
     df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce") if "GAME_DATE" in df.columns else pd.Timestamp.now()
     return df
-
 def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
     s = pd.Series(dtype=float, index=df.index)
     if stat_code in ["PTS","REB","AST","STL","BLK","FG3M"]: s = df[stat_code].astype(float)
@@ -365,7 +336,6 @@ def compute_stat_series(df: pd.DataFrame, stat_code: str) -> pd.Series:
         s = ((pts + reb + ast) >= 3).astype(int)
     else: s = df["PTS"].astype(float)
     return s
-
 def leg_probability(df: pd.DataFrame, stat_code: str, direction: str, thr: float) -> tuple[float,int,int]:
     ser = compute_stat_series(df, stat_code)
     if stat_code in ["DOUBDOUB","TRIPDOUB"]:
@@ -375,14 +345,11 @@ def leg_probability(df: pd.DataFrame, stat_code: str, direction: str, thr: float
     total = int(ser.notna().sum())
     p = hits/total if total else 0.0
     return p, hits, total
-
 def headshot_url(pid: int | None) -> str | None:
     return f"https://cdn.nba.com/headshots/nba/latest/260x190/{pid}.png" if pid else None
-
 def get_team_logo_from_df(df):
     try: return f"https://cdn.nba.com/logos/nba/{int(df['TEAM_ID'].iloc[0])}/global/L/logo.svg"
     except: return None
-
 def breakeven_for_stat(series: pd.Series) -> dict:
     s = pd.to_numeric(series, errors="coerce").dropna()
     total = len(s)
@@ -396,13 +363,11 @@ def breakeven_for_stat(series: pd.Series) -> dict:
         if gap < best_gap or best_t is None: best_t, best_gap, best_over = t, gap, over
     over_prob = float(best_over); under_prob = 1.0 - over_prob
     return {"line": float(best_t), "over_prob": over_prob, "under_prob": under_prob, "over_odds": prob_to_american(over_prob), "under_odds": prob_to_american(under_prob)}
-
 @st.cache_data(show_spinner=False)
 def get_current_season_str():
     now = datetime.now()
     year = now.year if now.month >= 8 else now.year - 1
     return f"{year}-{str(year+1)[-2:]}"
-
 @st.cache_data(show_spinner=True)
 def load_team_logs(season: str) -> pd.DataFrame:
     df = leaguegamelog.LeagueGameLog(season=season, season_type_all_star="Regular Season", player_or_team_abbreviation="T", timeout=60).get_data_frames()[0]
@@ -410,18 +375,14 @@ def load_team_logs(season: str) -> pd.DataFrame:
         if k in df.columns: df[k] = pd.to_numeric(df[k], errors="coerce")
     df["OPP"] = df["MATCHUP"].astype(str).str.extract(r"vs\. (\w+)|@ (\w+)", expand=True).bfill(axis=1).iloc[:, 0]
     return df
-
 def get_team_color(team_abbr):
     return TEAM_COLORS.get(team_abbr, "#999999")
-
 def soft_bg(hex_color, opacity=0.15):
     try: return mcolors.to_hex(mcolors.to_rgba(hex_color, opacity))
     except: return "#222222"
-
 def get_player_position(pid):
     pos = POSITION_MAP.get(pid)
     return NORMALIZED_POS.get(pos, "SG") if pos else "SG"
-
 def get_positional_defense_data(season):
     logs = get_league_player_logs(season)
     if logs.empty: return pd.DataFrame(columns=["Team", "Pos", "PTS", "REB", "AST", "FG3M"])
@@ -443,7 +404,6 @@ def get_positional_defense_data(season):
                 full.append({"Team": team, "Pos": pos, "PTS": team_avg["PTS"], "REB": team_avg["REB"], "AST": team_avg["AST"], "FG3M": team_avg["FG3M"]})
     df = pd.DataFrame(full); df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
     return df
-
 def build_team_positional_defense(season):
     df = get_positional_defense_data(season); out = {}
     for pos in ["PG", "SG", "SF", "PF", "C"]:
@@ -454,7 +414,6 @@ def build_team_positional_defense(season):
             if team not in out: out[team] = {}
             out[team][pos] = {f"{k}_allowed": row[k] if k.endswith("_allowed") else row[k] for k in ["PTS", "REB", "AST", "PRA", "FG3M"]} | {f"{k}_rank": row[f"{k}_rank"] for k in ["PTS", "REB", "AST", "PRA", "FG3M"]}
     return out
-
 @st.cache_data(show_spinner=False)
 def get_league_player_logs(season: str) -> pd.DataFrame:
     df = leaguegamelog.LeagueGameLog(season=season, season_type_all_star="Regular Season", player_or_team_abbreviation="P").get_data_frames()[0]
@@ -463,13 +422,11 @@ def get_league_player_logs(season: str) -> pd.DataFrame:
     df["GAME_DATE_DT"] = pd.to_datetime(df["GAME_DATE"], errors="coerce") if "GAME_DATE" in df.columns else pd.Timestamp.now()
     df["OPP"] = df["MATCHUP"].astype(str).str.extract(r"vs\. (\w+)|@ (\w+)", expand=True).bfill(axis=1).iloc[:, 0]
     return df
-
 def get_team_defense_table(season: str) -> pd.DataFrame:
     df = get_league_player_logs(season)
     tmp = df.groupby(["OPP", "GAME_ID"])[["PTS", "REB", "AST", "FG3M"]].sum().reset_index()
     agg = tmp.groupby("OPP")[["PTS", "REB", "AST", "FG3M"]].mean().reset_index().rename(columns={"OPP": "Team", "PTS": "PTS_allowed", "REB": "REB_allowed", "AST": "AST_allowed", "FG3M": "FG3M_allowed"})
     return agg
-
 @st.cache_data(show_spinner=False)
 def get_team_roster(season: str, team_abbrev: str) -> pd.DataFrame:
     team_meta = [t for t in teams_static.get_teams() if t["abbreviation"] == team_abbrev]
@@ -477,13 +434,11 @@ def get_team_roster(season: str, team_abbrev: str) -> pd.DataFrame:
     team_id = team_meta[0]["id"]
     roster_df = commonteamroster.CommonTeamRoster(team_id=team_id, season=season).get_data_frames()[0]
     return roster_df[["PLAYER_ID", "PLAYER"]]
-
 def style_def_table(df: pd.DataFrame, stat_col: str):
     def row_style(row):
         team = row["Team"]; base = TEAM_COLORS.get(team, "#111827"); bg_team = lighten_hex(base, 0.4); bg_val = "#020617"
         return [f"background-color:{bg_team}; color:#f9fafb; font-weight:700; text-align:left;", f"background-color:{bg_val}; color:#f9fafb; text-align:right;"]
     return df.style.hide(axis="index").format({stat_col: "{:.1f}"}).apply(row_style, axis=1)
-
 def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray:
     vals = pd.to_numeric(series, errors="coerce").dropna().values
     if len(vals) == 0: return np.array([])
@@ -493,7 +448,6 @@ def monte_carlo_predictive(series: pd.Series, n_sims: int = 10000) -> np.ndarray
     base = np.random.choice(vals, size=n_sims, replace=True); noise = np.random.normal(0, bandwidth, size=n_sims)
     draws = base + noise
     return np.clip(draws, 0, None)
-
 def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, p_hit, fair_odds, sb_odds, ev_pct):
     ev_str = "—" if ev_pct is None else f"{ev_pct:.2f}%"; hit_str = f"{p_hit*100:.1f}%"
     cls = "neutral" if ev_pct is None else ("pos" if ev_pct >= 0 else "neg")
@@ -510,31 +464,24 @@ def render_mc_result_card(player, direction, thr, stat_label, loc_text, last_n, 
   <div style="margin-top:10px;"><span class="chip">{('🔥 +EV (Monte Carlo)' if (ev_pct is not None and ev_pct >= 0) else '⚠️ Negative EV by simulation')}</span></div>
 </div>
 """
-
 def lighten_hex(color: str, factor: float = 0.35) -> str:
     color = color.lstrip("#"); r, g, b = int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
     r = int(r + (255 - r) * factor); g = int(g + (255 - g) * factor); b = int(b + (255 - b) * factor)
     return f"#{r:02x}{g:02x}{b:02x}"
-
 def ordinal(n: int) -> str:
     if 10 <= n % 100 <= 20: suffix = "th"
     else: suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
     return f"{n}{suffix}"
-
 EDGE_THRESHOLDS = {"PTS": {"strong": 4.0, "mild": 2.0}, "REB": {"strong": 2.2, "mild": 1.0}, "AST": {"strong": 2.0, "mild": 1.0}, "PRA": {"strong": 6.0, "mild": 3.0}, "FG3M": {"strong": 1.0, "mild": 0.4}}
-
 STAT_PREFIX_LABEL = {"PTS": "PTS", "REB": "REB", "AST": "AST", "PRA": "PRA", "FG3M": "3PM"}
-
 def player_prefix(name: str, stat: str) -> str:
     tokens = name.split()
     last_name = tokens[-1] if len(tokens) == 1 else (tokens[-2] + " " + tokens[-1] if tokens[-1] in {"Jr.", "Jr", "Sr.", "Sr", "II", "III", "IV"} else tokens[-1])
     label = STAT_PREFIX_LABEL.get(stat, stat)
     return f"{last_name.upper()} {label.upper()}"
-
 def logistic_prob(z: float) -> float:
     p = 0.5 + 0.18 * z
     return float(np.clip(p, 0.05, 0.95))
-
 @st.cache_data(show_spinner=False)
 def load_enhanced_team_logs(season: str) -> pd.DataFrame:
     try: df = leaguegamelog.LeagueGameLog(season=season, season_type_all_star="Regular Season", player_or_team_abbreviation="T", timeout=60).get_data_frames()[0]
@@ -559,7 +506,6 @@ def load_enhanced_team_logs(season: str) -> pd.DataFrame:
     df['drtg'] = np.where(df['opp_poss'] > 0, df['opp_pts'] / df['opp_poss'] * 100, 0)
     df['nrtg'] = df['ortg'] - df['drtg']
     return df
-
 def get_rest_days(team: str, logs: pd.DataFrame, game_date: date) -> int:
     team_games = logs[logs['TEAM_ABBREVIATION'] == team].copy()
     if team_games.empty: return 0
@@ -567,7 +513,6 @@ def get_rest_days(team: str, logs: pd.DataFrame, game_date: date) -> int:
     if past_games.empty: return 99
     last_game_date = past_games['GAME_DATE'].max().date()
     return (game_date - last_game_date).days
-
 @st.cache_data(show_spinner=False)
 def train_margin_model(season: str):
     if not XGB_AVAILABLE: return None
@@ -600,10 +545,12 @@ def train_margin_model(season: str):
         features_list.append(features); margins.append(actual_margin)
     if len(margins) < 50: return None
     X = np.array(features_list); y = np.array(margins)
-    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
-    model.fit(X, y)
-    return model
-
+    try:
+        model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+        model.fit(X, y)
+        return model
+    except ImportError:
+        return None
 @st.cache_data(show_spinner=False)
 def train_total_model(season: str):
     if not XGB_AVAILABLE: return None
@@ -634,10 +581,12 @@ def train_total_model(season: str):
         features_list.append(features); totals.append(actual_total)
     if len(totals) < 50: return None
     X = np.array(features_list); y = np.array(totals)
-    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
-    model.fit(X, y)
-    return model
-
+    try:
+        model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, random_state=42)
+        model.fit(X, y)
+        return model
+    except ImportError:
+        return None
 @st.cache_data(show_spinner=False)
 def get_espn_game_summary(event_id: str) -> dict:
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={event_id}"
@@ -646,7 +595,6 @@ def get_espn_game_summary(event_id: str) -> dict:
         if r.status_code == 200: return r.json()
     except: pass
     return {}
-
 @st.cache_data(show_spinner=False)
 def load_player_impact(season: str) -> pd.DataFrame:
     try:
@@ -660,7 +608,6 @@ def load_player_impact(season: str) -> pd.DataFrame:
     impact_score = (minute_factor * net_factor).clip(lower=0.2, upper=2.0)
     df["IMPACT_SCORE"] = impact_score
     return df[["PLAYER_NAME_UPPER", "TEAM_ABBREVIATION", "IMPACT_SCORE", "MIN", "NET_RATING", "GP"]]
-
 @st.cache_data(show_spinner=False)
 def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     logs = get_league_player_logs(season)
@@ -668,7 +615,6 @@ def load_league_player_logs_upper(season: str) -> pd.DataFrame:
     logs = logs.copy()
     logs["PLAYER_NAME_UPPER"] = logs["PLAYER_NAME"].str.upper() if "PLAYER_NAME" in logs.columns else ""
     return logs
-
 def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str, game_date: date, player_impacts: pd.DataFrame | None, logs_team: pd.DataFrame, league_logs_upper: pd.DataFrame) -> tuple:
     inj_home, inj_away = [], []
     adjust_home_nrtg, adjust_away_nrtg = 0.0, 0.0
@@ -752,13 +698,10 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
         elif team_abbr == away_abbr:
             inj_away = team_inj_list; adjust_away_nrtg = team_nrtg_adj; adjust_away_ortg = team_ortg_adj; adjust_away_drtg = team_drtg_adj
     return inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg
-
 def team_html(team):
     team_key = ABBREV_MAP.get(team, team); logo = TEAM_LOGOS.get(team_key, "")
     return f"<span style=\"display:inline-flex; align-items:center; gap:6px; vertical-align:middle;\"><img src=\"{logo}\" width=\"20\" style=\"border-radius:3px; vertical-align:middle;\" /><span style=\"vertical-align:middle;\">{team}</span></span>"
-
 tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_ml = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💵 ML, Spread, & Totals"])
-
 with tab_builder:
     fc1, fc2, fc3 = st.columns([1.2, 1, 1])
     with fc1:
@@ -897,7 +840,6 @@ with tab_builder:
                     for spine in ax.spines.values(): spine.set_edgecolor("#4b5563")
                     ax.grid(color="#374151", linestyle="--", linewidth=0.5, alpha=0.55); ax.set_axisbelow(True); ax.set_ylabel(""); ax.set_xlabel("")
                     st.pyplot(fig, use_container_width=True)
-
 with tab_breakeven:
     st.subheader("🔎 Breakeven Finder")
     st.caption(f"See the breakeven (closest to even odds) value for each stat type")
@@ -940,7 +882,6 @@ with tab_breakeven:
                     if line is None: rows.append({"Stat": STAT_LABELS[sc], "Breakeven Line": "—", "Over": "—", "Under": "—"}); continue
                     rows.append({"Stat": STAT_LABELS[sc], "Breakeven Line": fmt_half(line), "Over": f"{out['over_prob']*100:.1f}% ({out['over_odds']})", "Under": f"{out['under_prob']*100:.1f}% ({out['under_odds']})"})
                 st.table(pd.DataFrame(rows).set_index("Stat"))
-
 with tab_mc:
     st.subheader("🎲 Monte Carlo Prop Simulator (Predictive)")
     st.caption(f"Simulate a specific player prop to understand their dispersion and confidence intervals")
@@ -987,7 +928,6 @@ with tab_mc:
         for s in ax.spines.values(): s.set_edgecolor("#4b5563")
         st.pyplot(fig, use_container_width=True)
         st.caption(f"💡 Simulations use historical variance + smoothing noise. Rerun for new random draws. Edge >0% = +EV bet.")
-
 with tab_injury:
     st.subheader("🩹 Injury Impact Analyzer")
     st.caption(f"Search for an injured player to see how their team fares without them")
@@ -1051,7 +991,6 @@ with tab_injury:
             html += "</tbody></table>"
             st.caption(f"Positive Delta = player gains production when **{injured_name}** is OUT.")
             st.markdown(html, unsafe_allow_html=True)
-
 with tab_me:
     st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
     c1, c2 = st.columns([1.2, 1])
@@ -1183,7 +1122,6 @@ with tab_me:
             if not top_overs and not top_fades:
                 st.markdown("<div style='color:#ccc; font-size:13px;'>No clear edges detected for this matchup. ⚠️</div>", unsafe_allow_html=True)
             st.markdown("---")
-
 with tab_matchups:
     st.subheader("📈 Team Defense — Defensive Averages (Per Game)")
     st.caption("Based on NBA team game logs. Sorted from weakest (top) to strongest (bottom) defense.")
@@ -1205,7 +1143,6 @@ with tab_matchups:
 """, unsafe_allow_html=True)
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
-
 with tab_ml:
     st.subheader("💵 ML, Spread, & Totals Analyzer")
     st.caption("Get live projections and edges for moneyline, spread, and totals using team strength and game context")

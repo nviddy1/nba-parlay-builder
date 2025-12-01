@@ -95,14 +95,6 @@ NORMALIZED_POS = {"PG": "PG", "G": "PG", "SG": "SG", "SF": "SF", "PF": "PF", "F"
 
 POSITION_MAP = {}
 
-def prob_to_ml(p):
-    if p <= 0 or p >= 1:
-        return "N/A"
-    dec = 1 / p
-    if dec >= 2:
-        return f"+{int((dec - 1) * 100)}"
-    return f"-{int(100 / (dec - 1))}"
-
 def get_espn_scoreboard(date):
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date}"
     r = requests.get(url)
@@ -275,6 +267,14 @@ def prob_to_american(p: float):
     if p <= 0 or p >= 1: return "N/A"
     dec = 1.0/p
     return f"+{int(round((dec-1)*100))}" if dec >= 2.0 else f"-{int(round(100/(dec-1)))}"
+
+def prob_to_ml(p):
+    if p <= 0 or p >= 1:
+        return "N/A"
+    dec = 1 / p
+    if dec >= 2:
+        return f"+{int((dec - 1) * 100)}"
+    return f"-{int(100 / (dec - 1))}"
 
 def fmt_half(x: float | int) -> str:
     try: return f"{float(x):.1f}".rstrip("0").rstrip(".")
@@ -770,6 +770,7 @@ with tab_builder:
     with fc3: last_n_games = st.slider("Last N Games", 5, 100, 20, 1, key="parlay_lastn")
     if "legs" not in st.session_state: st.session_state.legs = []
     if "awaiting_input" not in st.session_state: st.session_state.awaiting_input = True
+    c1, c2 = st.columns([1,1])
     c1, c2 = st.columns([1,1])
     with c1:
         if st.button("+ Add Leg"):
