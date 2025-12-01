@@ -1228,16 +1228,17 @@ with tab_ml:
             xgb_total = total_model.predict(np.array([total_feat]))[0]
             projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
         projected_total = round(projected_total, 1)
-        # Render compact predictions with logos
+        # Logos
         away_logo = TEAM_LOGOS.get(away, "")
         home_logo = TEAM_LOGOS.get(home, "")
+        # Render compact predictions with logos
         game_header = f"""
 <div style='display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding: 10px; background: #1e1e1e; border-radius: 8px; border: 1px solid #333;'>
   <div style='display: flex; align-items: center; gap: 8px;'>
-    <img src='{away_logo}' width='24' height='24' style='border-radius: 4px;' />
+    <img src='{away_logo}' width='24' height='24' style='border-radius: 4px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
     <strong style='color: #fff;'>{away}</strong>
     <span style='color: #aaa;'>@</span>
-    <img src='{home_logo}' width='24' height='24' style='border-radius: 4px;' />
+    <img src='{home_logo}' width='24' height='24' style='border-radius: 4px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
     <strong style='color: #fff;'>{home}</strong>
   </div>
   <div style='color: #aaa; font-size: 0.9rem;'>{status}</div>
@@ -1248,19 +1249,44 @@ with tab_ml:
 <div style='display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;'>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
     <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Spread</div>
-    <div style='font-size:1.1rem; font-weight:700;'>{est_spread_home:+.1f}</div>
+    <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+      <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
+      <span style='font-size:1.1rem; font-weight:700;'>{est_spread_home:+.1f}</span>
+    </div>
   </div>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
     <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Total</div>
-    <div style='font-size:1.1rem; font-weight:700;'>{projected_total:.1f}</div>
+    <div style='display: flex; align-items: center; justify-content: center; gap: 8px;'>
+      <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
+      <span style='font-size:1.1rem; font-weight:700;'>{projected_total:.1f}</span>
+      <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
+    </div>
   </div>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
     <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Win Prob</div>
-    <div style='font-size:0.9rem;'>{home}: {win_prob_home*100:.0f}%<br>{away}: {win_prob_away*100:.0f}%</div>
+    <div style='display: flex; flex-direction: column; gap: 4px; font-size:0.9rem;'>
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
+        <span>{home}: {win_prob_home*100:.0f}%</span>
+      </div>
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
+        <span>{away}: {win_prob_away*100:.0f}%</span>
+      </div>
+    </div>
   </div>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
     <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Fair ML</div>
-    <div style='font-size:0.9rem;'>{home}: {ml_home}<br>{away}: {ml_away}</div>
+    <div style='display: flex; flex-direction: column; gap: 4px; font-size:0.9rem;'>
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
+        <span>{home}: {ml_home}</span>
+      </div>
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
+        <span>{away}: {ml_away}</span>
+      </div>
+    </div>
   </div>
 </div>
 """)
@@ -1271,7 +1297,7 @@ with tab_ml:
 <div style='margin-top:10px;'>
   <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
     <div style='display: flex; align-items: center; gap: 10px;'>
-      <img src='{home_logo}' width='32' height='32' style='border-radius: 4px;' />
+      <img src='{home_logo}' width='32' height='32' style='border-radius: 4px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
       <div>
         <div style='font-weight:600; margin-bottom:8px;'>Home: {home}</div>
         <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
@@ -1280,7 +1306,7 @@ with tab_ml:
       </div>
     </div>
     <div style='display: flex; align-items: center; gap: 10px;'>
-      <img src='{away_logo}' width='32' height='32' style='border-radius: 4px;' />
+      <img src='{away_logo}' width='32' height='32' style='border-radius: 4px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
       <div>
         <div style='font-weight:600; margin-bottom:8px;'>Away: {away}</div>
         <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
