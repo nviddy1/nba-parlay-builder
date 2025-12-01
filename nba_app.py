@@ -1228,10 +1228,24 @@ with tab_ml:
             xgb_total = total_model.predict(np.array([total_feat]))[0]
             projected_total = 0.5 * projected_total_base + 0.5 * xgb_total
         projected_total = round(projected_total, 1)
-        # Render compact predictions
-        st.markdown(f"### {away} @ {home} ({status})")
+        # Render compact predictions with logos
+        away_logo = TEAM_LOGOS.get(away, "")
+        home_logo = TEAM_LOGOS.get(home, "")
+        game_header = f"""
+<div style='display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding: 10px; background: #1e1e1e; border-radius: 8px; border: 1px solid #333;'>
+  <div style='display: flex; align-items: center; gap: 8px;'>
+    <img src='{away_logo}' width='24' height='24' style='border-radius: 4px;' />
+    <strong style='color: #fff;'>{away}</strong>
+    <span style='color: #aaa;'>@</span>
+    <img src='{home_logo}' width='24' height='24' style='border-radius: 4px;' />
+    <strong style='color: #fff;'>{home}</strong>
+  </div>
+  <div style='color: #aaa; font-size: 0.9rem;'>{status}</div>
+</div>
+"""
+        st.markdown(game_header, unsafe_allow_html=True)
         projected_html = textwrap.dedent(f"""
-<div style='margin-top:10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;'>
+<div style='display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;'>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
     <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Spread</div>
     <div style='font-size:1.1rem; font-weight:700;'>{est_spread_home:+.1f}</div>
@@ -1252,28 +1266,34 @@ with tab_ml:
 """)
         st.markdown(projected_html, unsafe_allow_html=True)
         with st.expander(f"Expand: Efficiencies & Injuries ({len(inj_home) + len(inj_away)} total)"):
-            # Team strengths
+            # Team strengths with logos
             strength_html = textwrap.dedent(f"""
 <div style='margin-top:10px;'>
   <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
-    <div>
-      <div style='font-weight:600; margin-bottom:8px;'>Home: {home}</div>
-      <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
-      <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
-      <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
+    <div style='display: flex; align-items: center; gap: 10px;'>
+      <img src='{home_logo}' width='32' height='32' style='border-radius: 4px;' />
+      <div>
+        <div style='font-weight:600; margin-bottom:8px;'>Home: {home}</div>
+        <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
+      </div>
     </div>
-    <div>
-      <div style='font-weight:600; margin-bottom:8px;'>Away: {away}</div>
-      <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
-      <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
-      <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
+    <div style='display: flex; align-items: center; gap: 10px;'>
+      <img src='{away_logo}' width='32' height='32' style='border-radius: 4px;' />
+      <div>
+        <div style='font-weight:600; margin-bottom:8px;'>Away: {away}</div>
+        <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
+      </div>
     </div>
   </div>
   <div style='margin-top:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Diff (Adj): {nrtg_diff_adj:+.1f} | Margin (w/ HCA): {est_margin:+.1f}</div>
 </div>
 """)
             st.markdown(strength_html, unsafe_allow_html=True)
-            # Injuries
+            # Injuries (logos already in header, no need here)
             col1, col2 = st.columns(2)
             with col1:
                 st.write(f"**{home} Out ({len(inj_home)} players):**")
@@ -1295,4 +1315,3 @@ with tab_ml:
                 st.write(f"*NRTG Adj: {adjust_away_nrtg:+.1f} | ORTG/DRTG Adj: {adjust_away_ortg:+.1f}/{adjust_away_drtg:+.1f}*")
         if game_idx < len(games_ml) - 1:
             st.markdown("---")
-    # Optional: Add EV inputs at bottom if desired, but per-game would be heavy—consider a separate section
