@@ -246,11 +246,14 @@ def prob_to_american(p: float):
     dec = 1.0/p
     return f"+{int(round((dec-1)*100))}" if dec >= 2.0 else f"-{int(round(100/(dec-1)))}"
 def prob_to_ml(p):
-    if p <= 0 or p >= 1:
+    if np.isnan(p) or p <= 0 or p >= 1:
         return "N/A"
-    dec = 1 / p
+    dec = 1.0 / p
     if dec >= 2:
         return f"+{int((dec - 1) * 100)}"
+    if dec - 1 <= 0:  # Safety for floating-point underflow near 1.0
+        return "-9999"  # Heavy favorite; adjust as needed (or "N/A")
+    return f"-{int(100 / (dec - 1))}"
     return f"-{int(100 / (dec - 1))}"
 def fmt_half(x: float | int) -> str:
     try: return f"{float(x):.1f}".rstrip("0").rstrip(".")
