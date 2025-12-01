@@ -1146,8 +1146,7 @@ with tab_matchups:
 with tab_ml:
     st.subheader("💵 ML, Spread, & Totals Analyzer")
     st.caption("Projections for all games on the selected date. Click expanders for detailed efficiencies & injuries.")
-    fc1 = st.column(1)
-    with fc1: ml_date = st.date_input("Game Date", value=today, key="ml_date")
+    ml_date = st.date_input("Game Date", value=today, key="ml_date")
     date_str = ml_date.strftime("%Y%m%d")
     scoreboard_ml = fetch_scoreboard_cached(date_str)
     games_ml = extract_games_from_scoreboard(scoreboard_ml)
@@ -1219,7 +1218,7 @@ with tab_ml:
         ortg_home_total = ortg_home + adjust_home_ortg
         ortg_away_total = ortg_away + adjust_away_ortg
         drtg_home_total = drtg_home + adjust_home_drtg
-        drtg_away_total = drtg_away + adjust_home_drtg
+        drtg_away_total = drtg_away + adjust_away_drtg
         exp_pts_home = ((ortg_home_total + drtg_away_total) / 2.0) * (proj_possessions / 100.0)
         exp_pts_away = ((ortg_away_total + drtg_home_total) / 2.0) * (proj_possessions / 100.0)
         projected_total_base = round(exp_pts_home + exp_pts_away, 1)
