@@ -419,7 +419,9 @@ def get_positional_defense_data(season):
     if logs.empty: return pd.DataFrame(columns=["Team", "Pos", "PTS", "REB", "AST", "FG3M"])
     for col in ["PTS", "REB", "AST", "FG3M"]: logs[col] = pd.to_numeric(logs[col], errors="coerce").fillna(0)
     logs["POS"] = logs["PLAYER_ID"].apply(get_player_position)
-    opp_col = "OPPONENT" if "OPPONENT" in logs.columns else (logs["OPPONENT"] := logs["MATCHUP"].str[-3:], "OPPONENT")[1]
+    if "OPPONENT" not in logs.columns:
+        logs["OPPONENT"] = logs["MATCHUP"].str[-3:]
+    opp_col = "OPPONENT"
     grouped = logs.groupby([opp_col, "POS"]).agg({"PTS": "mean", "REB": "mean", "AST": "mean", "FG3M": "mean"}).reset_index()
     grouped.rename(columns={opp_col: "Team", "POS": "Pos"}, inplace=True)
     teams = grouped["Team"].unique(); positions = ["PG", "SG", "SF", "PF", "C"]
