@@ -95,14 +95,6 @@ NORMALIZED_POS = {"PG": "PG", "G": "PG", "SG": "SG", "SF": "SF", "PF": "PF", "F"
 
 POSITION_MAP = {}
 
-def prob_to_ml(p):
-    if p <= 0 or p >= 1:
-        return "N/A"
-    dec = 1 / p
-    if dec >= 2:
-        return f"+{int((dec - 1) * 100)}"
-    return f"-{int(100 / (dec - 1))}"
-
 def get_espn_scoreboard(date):
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date}"
     r = requests.get(url)
@@ -427,9 +419,7 @@ def get_positional_defense_data(season):
     if logs.empty: return pd.DataFrame(columns=["Team", "Pos", "PTS", "REB", "AST", "FG3M"])
     for col in ["PTS", "REB", "AST", "FG3M"]: logs[col] = pd.to_numeric(logs[col], errors="coerce").fillna(0)
     logs["POS"] = logs["PLAYER_ID"].apply(get_player_position)
-    if "OPPONENT" not in logs.columns:
-        logs["OPPONENT"] = logs["MATCHUP"].str[-3:]
-    opp_col = "OPPONENT"
+    opp_col = "OPPONENT" if "OPPONENT" in logs.columns else (logs["OPPONENT"] := logs["MATCHUP"].str[-3:], "OPPONENT")[1]
     grouped = logs.groupby([opp_col, "POS"]).agg({"PTS": "mean", "REB": "mean", "AST": "mean", "FG3M": "mean"}).reset_index()
     grouped.rename(columns={opp_col: "Team", "POS": "Pos"}, inplace=True)
     teams = grouped["Team"].unique(); positions = ["PG", "SG", "SF", "PF", "C"]
@@ -771,13 +761,8 @@ with tab_builder:
     if "legs" not in st.session_state: st.session_state.legs = []
     if "awaiting_input" not in st.session_state: st.session_state.awaiting_input = True
     c1, c2 = st.columns([1,1])
-    with c1:
-        if st.button("+ Add Leg"):
-            st.session_state.awaiting_input = True
-    with c2:
-        if st.button("− Remove Last Leg") and st.session_state.legs:
-            st.session_state.legs.pop()
-            st.rerun()
+    with c1: if st.button("➕ Add Leg"): st.session_state.awaiting_input = True
+    with c2: if st.button("➖ Remove Last Leg") and st.session_state.legs: st.session_state.legs.pop(); st.rerun()
     st.write("**Input bet**")
     if st.session_state.legs:
         for i, leg in enumerate(st.session_state.legs):
@@ -795,10 +780,7 @@ with tab_builder:
                     leg["range"] = st.selectbox("Game Range", ["FULL","L10","L20"], index=["FULL","L10","L20"].index(leg.get("range","FULL")), key=f"range_{i}")
                     leg["odds"] = st.number_input("Sportsbook Odds", value=int(leg["odds"]), step=5, key=f"odds_{i}")
                 rm_col, _ = st.columns([1,5])
-                with rm_col:
-                    if st.button(f"Remove Leg {leg_no}", key=f"remove_{i}"):
-                        st.session_state.legs.pop(i)
-                        st.rerun()
+                with rm_col: if st.button(f"❌ Remove Leg {leg_no}", key=f"remove_{i}"): st.session_state.legs.pop(i); st.rerun()
     if st.session_state.awaiting_input:
         bet_text = st.text_input("Input bet", placeholder="Maxey O 24.5 P Away -110", key="freeform_input", label_visibility="collapsed")
         if bet_text.strip():
