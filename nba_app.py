@@ -1167,6 +1167,10 @@ with tab_ml:
         st.warning("No data available for this season yet.")
         st.stop()
     
+    # Convert GAME_DATE to datetime for filtering
+    logs_team['GAME_DATE'] = pd.to_datetime(logs_team['GAME_DATE'])
+    league_logs_upper['GAME_DATE'] = pd.to_datetime(league_logs_upper['GAME_DATE'])
+    
     # Compute recent metrics based on last 10 games before ml_date
     import pandas as pd
     ml_date_pd = pd.to_datetime(ml_date)
