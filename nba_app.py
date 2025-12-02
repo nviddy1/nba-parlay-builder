@@ -936,41 +936,103 @@ with tab_injury:
         season_inj = st.selectbox("Season", ["2025-26","2024-25","2023-24"], index=1, key="season_inj")
         team_inj = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHX") if "PHX" in TEAM_ABBRS else 0)
         roster_df = get_team_roster(season_inj, team_inj)
-        if roster_df.empty: st.warning("Could not load roster for this team/season."); injured_name = None; injured_id = None
+        if roster_df.empty: 
+            st.warning("Could not load roster for this team/season.")
+            injured_name = None
+            injured_id = None
         else:
             injured_name = st.selectbox("Injured / Missing Player", roster_df["PLAYER"].tolist(), key="inj_player")
             injured_id = int(roster_df.loc[roster_df["PLAYER"] == injured_name, "PLAYER_ID"].iloc[0]) if injured_name else None
         stat_inj = st.selectbox("Stat", ["PTS","REB","AST","PRA"], index=0, key="stat_inj")
         min_games_without = st.slider("Min games without to include", 1, 15, 3, 1, key="min_g_without")
+        double_injury = st.checkbox("Analyze double injury impact?", key="double_inj")
+        second_injured_name = None
+        second_injured_id = None
+        if double_injury and not roster_df.empty and injured_name:
+            available_players = [p for p in roster_df["PLAYER"].tolist() if p != injured_name]
+            if available_players:
+                second_injured_name = st.selectbox("Second Injured / Missing Player", available_players, key="inj_player2")
+                second_injured_id = int(roster_df.loc[roster_df["PLAYER"] == second_injured_name, "PLAYER_ID"].iloc[0])
+            else:
+                st.warning("No other players available.")
+                double_injury = False  # Disable if no options
         run_inj = st.button("Analyze Impact", key="run_inj")
     with colR:
         if run_inj:
-            if not injured_name or injured_id is None: st.warning("Select an injured player first."); st.stop()
-            logs = get_league_player_logs(season_inj); team_logs = logs[logs["TEAM_ABBREVIATION"] == team_inj].copy()
-            if team_logs.empty: st.warning("No logs for this team/season."); st.stop()
-            if stat_inj == "PRA": team_logs["PRA"] = team_logs["PTS"].fillna(0) + team_logs["REB"].fillna(0) + team_logs["AST"].fillna(0)
-            inj_logs = team_logs[team_logs["PLAYER_ID"] == injured_id]
-            if inj_logs.empty: st.warning(f"{injured_name} has no logged games this season."); st.stop()
-            games_with = set(inj_logs["GAME_ID"].unique()); all_games = set(team_logs["GAME_ID"].unique()); games_without = all_games - games_with
-            if not games_without: st.warning(f"No games where {injured_name} was OUT."); st.stop()
-            with_df = team_logs[(team_logs["GAME_ID"].isin(games_with)) & (team_logs["PLAYER_ID"] != injured_id)].copy()
-            without_df = team_logs[(team_logs["GAME_ID"].isin(games_without)) & (team_logs["PLAYER_ID"] != injured_id)].copy()
-            stat_col = stat_inj; g_with = with_df.groupby("PLAYER_ID")[stat_col].mean(); g_without = without_df.groupby("PLAYER_ID")[stat_col].mean()
+            if not injured_name or injured_id is None: 
+                st.warning("Select an injured player first.")
+                st.stop()
+            logs = get_league_player_logs(season_inj)
+            team_logs = logs[logs["TEAM_ABBREVIATION"] == team_inj].copy()
+            if team_logs.empty: 
+                st.warning("No logs for this team/season.")
+                st.stop()
+            if stat_inj == "PRA": 
+                team_logs["PRA"] = team_logs["PTS"].fillna(0) + team_logs["REB"].fillna(0) + team_logs["AST"].fillna(0)
+            inj_logs1 = team_logs[team_logs["PLAYER_ID"] == injured_id]
+            if inj_logs1.empty: 
+                st.warning(f"{injured_name} has no logged games this season.")
+                st.stop()
+            games_with1 = set(inj_logs1["GAME_ID"].unique())
+            all_games = set(team_logs["GAME_ID"].unique())
+            if double_injury and second_injured_id:
+                inj_logs2 = team_logs[team_logs["PLAYER_ID"] == second_injured_id]
+                if inj_logs2.empty: 
+                    st.warning(f"{second_injured_name} has no logged games this season.")
+                    st.stop()
+                games_with2 = set(inj_logs2["GAME_ID"].unique())
+                games_with = games_with1 & games_with2
+                injured_players = [injured_name, second_injured_name]
+                exclude_ids = [injured_id, second_injured_id]
+                without_msg = f"both {injured_name} and {second_injured_name} were OUT"
+            else:
+                games_with = games_with1
+                injured_players = [injured_name]
+                exclude_ids = [injured_id]
+                without_msg = f"{injured_name} was OUT"
+            games_without = all_games - games_with
+            if not games_without: 
+                st.warning(f"No games where {without_msg}.")
+                st.stop()
+            exclude_condition = team_logs["PLAYER_ID"].isin(exclude_ids)
+            with_df = team_logs[(team_logs["GAME_ID"].isin(games_with)) & (~exclude_condition)].copy()
+            without_df = team_logs[(team_logs["GAME_ID"].isin(games_without)) & (~exclude_condition)].copy()
+            stat_col = stat_inj
+            g_with = with_df.groupby("PLAYER_ID")[stat_col].mean()
+            g_without = without_df.groupby("PLAYER_ID")[stat_col].mean()
             n_without = without_df.groupby("PLAYER_ID")["GAME_ID"].nunique()
             rows = []
             idx = sorted(set(g_with.index) | set(g_without.index))
+            inj_str = " & ".join(injured_players)
             for pid in idx:
-                w = g_with.get(pid, np.nan); wo = g_without.get(pid, np.nan); nwo = int(n_without.get(pid, 0))
-                if nwo < min_games_without: continue
-                delta = wo - w; name = roster_df.loc[roster_df["PLAYER_ID"] == pid, "PLAYER"]
+                if pid in exclude_ids: 
+                    continue
+                w = g_with.get(pid, np.nan)
+                wo = g_without.get(pid, np.nan)
+                nwo = int(n_without.get(pid, 0))
+                if nwo < min_games_without: 
+                    continue
+                delta = wo - w
+                name = roster_df.loc[roster_df["PLAYER_ID"] == pid, "PLAYER"]
                 name = name.iloc[0] if not name.empty else str(pid)
-                rows.append({"Player": name, f"{stat_col} w/ {injured_name}": w, f"{stat_col} w/o {injured_name}": wo, "Games w/o": nwo, "Delta": delta})
-            if not rows: st.warning("No players met the filters."); st.stop()
+                rows.append({
+                    "Player": name, 
+                    f"{stat_col} w/ {inj_str}": w, 
+                    f"{stat_col} w/o {inj_str}": wo, 
+                    "Games w/o": nwo, 
+                    "Delta": delta
+                })
+            if not rows: 
+                st.warning("No players met the filters.")
+                st.stop()
             impact_df = pd.DataFrame(rows).sort_values("Delta", ascending=False).reset_index(drop=True)
             def apply_delta_color(val):
-                if val > 0: return "color:#7CFCBE; font-weight:700;"
-                elif val < 0: return "color:#FF6B6B; font-weight:700;"
-                else: return "color:#e5e7eb;"
+                if val > 0: 
+                    return "color:#7CFCBE; font-weight:700;"
+                elif val < 0: 
+                    return "color:#FF6B6B; font-weight:700;"
+                else: 
+                    return "color:#e5e7eb;"
             html = """
             <style>
                 table.custom-table {border-collapse: collapse; width: 100%; border-radius: 10px; overflow: hidden; margin-top: 10px;}
@@ -978,18 +1040,23 @@ with tab_injury:
                 table.custom-table td {background-color: #131417; color: #e5e7eb; padding: 8px 10px; border-bottom: 1px solid #2a2d31; font-size: 0.9rem;}
             </style>
             <table class="custom-table"><thead><tr>"""
-            for col in impact_df.columns: html += f"<th>{col}</th>"
+            for col in impact_df.columns: 
+                html += f"<th>{col}</th>"
             html += "</tr></thead><tbody>"
             for _, row in impact_df.iterrows():
                 html += "<tr>"
                 for col in impact_df.columns:
                     val = row[col]
-                    if col == "Delta": style = apply_delta_color(val); html += f"<td style='{style}'>{val:+.1f}</td>"
-                    elif isinstance(val, float): html += f"<td>{val:.1f}</td>"
-                    else: html += f"<td>{val}</td>"
+                    if col == "Delta": 
+                        style = apply_delta_color(val)
+                        html += f"<td style='{style}'>{val:+.1f}</td>"
+                    elif isinstance(val, float): 
+                        html += f"<td>{val:.1f}</td>"
+                    else: 
+                        html += f"<td>{val}</td>"
                 html += "</tr>"
             html += "</tbody></table>"
-            st.caption(f"Positive Delta = player gains production when **{injured_name}** is OUT.")
+            st.caption(f"Positive Delta = player gains production when **{inj_str}** {'are' if len(injured_players)>1 else 'is'} OUT.")
             st.markdown(html, unsafe_allow_html=True)
 with tab_me:
     st.subheader("🔥 Matchup Exploiter — Auto-Detected Game Edges")
