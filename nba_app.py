@@ -1154,29 +1154,22 @@ with tab_ml:
         st.warning("No games found for this date.")
         st.stop()
     season = get_current_season_str()
-    @st.cache_data(ttl=1800) # Cache for 30min
+    @st.cache_data(ttl=1800)  # Cache for 30min
     def get_game_data(season):
         logs_team = load_enhanced_team_logs(season)
         player_impacts = load_player_impact(season)
         league_logs_upper = load_league_player_logs_upper(season)
         margin_model = train_margin_model(season)
         total_model = train_total_model(season)
-        return logs_team, player_impacts, league_logs_upper, margin_model, total_model
-    logs_team, player_impacts, league_logs_upper, margin_model, total_model = get_game_data(season)
+        team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+        team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+        team_nrtg = team_ortg - team_drtg
+        team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean()
+        return logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss
+    logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss = get_game_data(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
         st.stop()
-    
-    # Compute recent metrics based on last 10 games before ml_date
-    import pandas as pd
-    ml_date_pd = pd.to_datetime(ml_date)
-    logs_recent = logs_team[logs_team['GAME_DATE'] < ml_date_pd].sort_values(['TEAM_ABBREVIATION', 'GAME_DATE'], ascending=[True, False])
-    last_10_games = logs_recent.groupby('TEAM_ABBREVIATION').head(10)
-    team_ortg = last_10_games.groupby("TEAM_ABBREVIATION")["ortg"].mean()
-    team_drtg = last_10_games.groupby("TEAM_ABBREVIATION")["drtg"].mean()
-    team_nrtg = team_ortg - team_drtg
-    team_poss = last_10_games.groupby("TEAM_ABBREVIATION")["poss"].mean()
-    
     for game_idx, game in enumerate(games_ml):
         home_raw = game["home"]
         away_raw = game["away"]
