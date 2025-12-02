@@ -1395,11 +1395,11 @@ with tab_ml:
     <div style='display: flex; flex-direction: column; gap: 4px; font-size:0.9rem;'>
       <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
         <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
-        <span>{home}: {ml_home:+d}</span>
+        <span>{home}: {int(ml_home):+d}</span>
       </div>
       <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
         <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
-        <span>{away}: {ml_away:+d}</span>
+        <span>{away}: {int(ml_away):+d}</span>
       </div>
     </div>
   </div>
