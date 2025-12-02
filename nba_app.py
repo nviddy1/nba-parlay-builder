@@ -701,8 +701,7 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
 def team_html(team):
     team_key = ABBREV_MAP.get(team, team); logo = TEAM_LOGOS.get(team_key, "")
     return f"<span style=\"display:inline-flex; align-items:center; gap:6px; vertical-align:middle;\"><img src=\"{logo}\" width=\"20\" style=\"border-radius:3px; vertical-align:middle;\" /><span style=\"vertical-align:middle;\">{team}</span></span>"
-tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_qh, tab_ml = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💨 Quick Hits" "💵 ML, Spread, & Totals"])
-with tab_builder:
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_qh, tab_ml = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💨 Quick Hits", "💵 ML, Spread, & Totals"])with tab_builder:
     fc1, fc2, fc3 = st.columns([1.2, 1, 1])
     with fc1:
         seasons = st.multiselect("Seasons", ["2025-26","2024-25","2023-24","2022-23"], default=["2025-26"], key="seasons_builder")
