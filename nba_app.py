@@ -1240,7 +1240,8 @@ with tab_qh:
         team_id = team_abbrev_to_id.get(team_qh, 1610612745)  # Default PHI
         try:
             # Get last N game IDs
-            gamelog = TeamGameLog(season_nullable=season_qh.replace('-', ''), team_id=team_id)            df_gamelog = gamelog.get_data_frames()[0]
+            gamelog = TeamGameLog(season_nullable=season_qh.replace('-', ''), team_id=team_id)
+            df_gamelog = gamelog.get_data_frames()[0]
             df_gamelog['GAME_DATE'] = pd.to_datetime(df_gamelog['GAME_DATE'])
             recent_games = df_gamelog.nlargest(last_n_qh, 'GAME_DATE')['GAME_ID'].tolist()
             
