@@ -933,8 +933,8 @@ with tab_injury:
     st.caption(f"Search for an injured player to see how their team fares without them")
     colL, colR = st.columns([1.2, 2])
     with colL:
-        season_inj = st.selectbox("Season", ["2025-26","2024-25","2023-24"], index=1, key="season_inj")
-        team_inj = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHX") if "PHX" in TEAM_ABBRS else 0)
+        season_inj = st.selectbox("Season", ["2025-26","2024-25","2023-24"], index=0, key="season_inj")
+        team_inj = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHI") if "PHI" in TEAM_ABBRS else 0)
         roster_df = get_team_roster(season_inj, team_inj)
         if roster_df.empty: 
             st.warning("Could not load roster for this team/season.")
