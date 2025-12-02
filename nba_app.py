@@ -1221,8 +1221,8 @@ with tab_matchups:
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
 with tab_qh:
     st.subheader("⚡ Quick Hits")
-    st.caption("Player averages for first quarter or first 3 minutes over last N games (or without selected player)")
-    
+    st.caption("Player averages for first quarter or first 3 minutes over last N games")
+   
     col1, col2 = st.columns([1, 2])
     with col1:
         season_qh = st.selectbox("Season", ["2025-26", "2024-25", "2023-24"], index=0, key="season_qh")
@@ -1230,47 +1230,29 @@ with tab_qh:
     with col2:
         last_n_qh = st.slider("Last N games", 5, 30, 10, key="last_n_qh")
         time_filter_qh = st.selectbox("Time Filter", ["First Quarter", "First 3 Minutes"], index=0, key="time_qh")
-        roster_qh = get_team_roster(season_qh, team_qh)
-        player_without_options = ["None"] + roster_qh["PLAYER"].tolist() if not roster_qh.empty else ["None"]
-        player_without_qh = st.selectbox("Games without player", player_without_options, key="player_without_qh")
-    
+   
     run_qh = st.button("Load Quick Hits", key="run_qh")
-    
+   
     if run_qh and team_qh:
-        team_id = team_abbrev_to_id.get(team_qh, 1610612745)  # Default PHI
+        team_id = team_abbrev_to_id.get(team_qh, 1610612745) # Default PHI
         try:
             # Get last N game IDs
             gamelog = TeamGameLog(season_nullable=season_qh.replace('-', ''), team_id=team_id)
             df_gamelog = gamelog.get_data_frames()[0]
             df_gamelog['GAME_DATE'] = pd.to_datetime(df_gamelog['GAME_DATE'])
             recent_games = df_gamelog.nlargest(last_n_qh, 'GAME_DATE')['GAME_ID'].tolist()
-            
-            # Filter for player without
-            filter_games = recent_games
-            if player_without_qh != "None":
-                player_row = roster_qh[roster_qh['PLAYER'] == player_without_qh]
-                if not player_row.empty:
-                    p_id = player_row['PLAYER_ID'].iloc[0]
-                    p_gamelog = PlayerGameLog(player_id=p_id, season_nullable=season_qh.replace('-', ''))
-                    df_p_log = p_gamelog.get_data_frames()[0]
-                    df_p_log['MIN'] = pd.to_numeric(df_p_log['MIN'], errors='coerce')
-                    out_games = df_p_log[df_p_log['MIN'] == 0]['GAME_ID'].tolist()
-                    filter_games = [g for g in recent_games if g in out_games]
-                    if not filter_games:
-                        st.warning(f"No games where {player_without_qh} was out in last {last_n_qh}.")
-                        st.stop()
-            
+           
             # Aggregate stats
             player_stats = {'PLAYER_ID': [], 'PLAYER_NAME': [], 'PTS': [], 'REB': [], 'AST': []}
-            total_games = len(filter_games)
-            
-            for game_id in filter_games:
+            total_games = len(recent_games)
+           
+            for game_id in recent_games:
                 bs = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id)
                 player_stats_home = bs.player_stats_home if hasattr(bs, 'player_stats_home') else pd.DataFrame()
                 player_stats_away = bs.player_stats_away if hasattr(bs, 'player_stats_away') else pd.DataFrame()
                 all_players = pd.concat([player_stats_home, player_stats_away], ignore_index=True)
                 all_players = all_players[all_players['TEAM_ABBREVIATION'] == team_qh.upper()]
-                
+               
                 if time_filter_qh == "First Quarter":
                     # Use Q1 columns: PTS1, REB1, AST1 (assuming column names like PTS_1, etc.; adjust based on actual)
                     # Note: In nba_api, columns are like PTS, but for quarters it's PTS1, REB1, etc.
@@ -1285,23 +1267,23 @@ with tab_qh:
                         player_stats['PTS'].append(pts)
                         player_stats['REB'].append(reb)
                         player_stats['AST'].append(ast)
-                else:  # First 3 Minutes - PBP aggregation (skeleton; implement full parsing)
+                else: # First 3 Minutes - PBP aggregation (skeleton; implement full parsing)
                     # pbp = playbyplayv2.PlayByPlayV2(game_id=game_id).get_data_frames()[0]
                     # Parse events for period=1, remaining time >=9:00, aggregate by PLAYER1_ID for shots, etc.
                     # For now, placeholder - full implementation needed for REB/AST attribution
                     st.warning("First 3 Minutes aggregation requires full PBP parsing; using Q1 as fallback for demo.")
                     # Similar to above, but with filtered pbp events summed per player
-                    pass  # Implement here: def aggregate_pbp_first3(pbp_df, team_abbr): ...
-            
+                    pass # Implement here: def aggregate_pbp_first3(pbp_df, team_abbr): ...
+           
             if not player_stats['PLAYER_ID']:
                 st.warning("No player data found.")
                 st.stop()
-            
+           
             df_stats = pd.DataFrame(player_stats)
             df_avg = df_stats.groupby(['PLAYER_ID', 'PLAYER_NAME']).agg({
                 'PTS': 'mean', 'REB': 'mean', 'AST': 'mean'
             }).round(1).reset_index()
-            
+           
             # Team header
             team_logo = TEAM_LOGOS.get(team_qh, "")
             st.markdown(f"""
@@ -1311,7 +1293,7 @@ with tab_qh:
                 <p style='color: #aaa; font-size: 0.9rem;'>Averages over {total_games} games ({time_filter_qh})</p>
             </div>
             """, unsafe_allow_html=True)
-            
+           
             # Custom HTML table with headshots
             html_table = """
             <style>
@@ -1339,7 +1321,7 @@ with tab_qh:
                 """
             html_table += "</tbody></table>"
             st.markdown(html_table, unsafe_allow_html=True)
-            
+           
         except Exception as e:
             st.error(f"Error loading data: {str(e)}")
             st.info("Ensure nba_api is installed: pip install nba_api")
