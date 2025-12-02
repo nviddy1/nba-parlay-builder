@@ -1391,4 +1391,17 @@ with tab_ml:
     </div>
   </div>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
-    <div style='margin-bottom:6px
+    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Moneyline</div>
+    <div style='display: flex; flex-direction: column; gap: 4px; font-size:0.9rem;'>
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
+        <span>{home}: {ml_home:+d}</span>
+      </div>
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
+        <span>{away}: {ml_away:+d}</span>
+      </div>
+    </div>
+  </div>
+</div>
+""")
