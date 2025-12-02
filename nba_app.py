@@ -1384,4 +1384,11 @@ with tab_ml:
         <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
         <span>{home}: {win_prob_home*100:.0f}%</span>
       </div>
-      <div style='display: flex;
+      <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
+        <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
+        <span>{away}: {win_prob_away*100:.0f}%</span>
+      </div>
+    </div>
+  </div>
+  <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
+    <div style='margin-bottom:6px
