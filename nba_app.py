@@ -19,6 +19,11 @@ try:
 except ImportError:
     xgb = None
     XGB_AVAILABLE = False
+@st.cache_data
+def get_team_abbrev_to_id():
+    return {t['abbreviation']: t['id'] for t in teams_static.get_teams()}
+
+team_abbrev_to_id = get_team_abbrev_to_id()
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
     "BOS": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
