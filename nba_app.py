@@ -981,16 +981,20 @@ with tab_injury:
                     st.warning(f"{second_injured_name} has no logged games this season.")
                     st.stop()
                 games_with2 = set(inj_logs2["GAME_ID"].unique())
-                games_with = games_with1 & games_with2
+                games_both_in = games_with1 & games_with2
+                games_at_least_one_in = games_with1 | games_with2
+                games_both_out = all_games - games_at_least_one_in
+                games_with = games_both_in  # Games where both played (w/ both)
+                games_without = games_both_out  # Games where neither played (w/o both)
                 injured_players = [injured_name, second_injured_name]
                 exclude_ids = [injured_id, second_injured_id]
                 without_msg = f"both {injured_name} and {second_injured_name} were OUT"
             else:
                 games_with = games_with1
+                games_without = all_games - games_with1
                 injured_players = [injured_name]
                 exclude_ids = [injured_id]
                 without_msg = f"{injured_name} was OUT"
-            games_without = all_games - games_with
             if not games_without: 
                 st.warning(f"No games where {without_msg}.")
                 st.stop()
