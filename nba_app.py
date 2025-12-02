@@ -1225,33 +1225,37 @@ with tab_ml:
         summary = get_espn_game_summary(event_id)
         inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, last_20_games, league_logs_upper)
         
-        # Override impacts based on recent MPG and re-compute adjustments
-        # Get recent player logs for home
-        recent_player_logs_home = league_logs_upper[
-            (league_logs_upper['TEAM_ABBREVIATION'] == home) & 
-            (league_logs_upper['GAME_DATE'] < ml_date_pd)
-        ].sort_values('GAME_DATE', ascending=False).head(20)
+        # Get recent game dates for home and away
+        recent_game_dates_home = last_20_games[last_20_games['TEAM_ABBREVIATION'] == home]['GAME_DATE'].unique()[:20]
+        recent_game_dates_away = last_20_games[last_20_games['TEAM_ABBREVIATION'] == away]['GAME_DATE'].unique()[:20]
         
+        # Override impacts based on recent MPG (including 0 for missed games) and re-compute adjustments
         for i in inj_home:
             player_name = i['name']
-            player_mins = recent_player_logs_home[recent_player_logs_home['PLAYER_NAME'] == player_name]['MIN']
-            avg_mpg = player_mins.mean() if not player_mins.empty else 0.0
+            player_logs = league_logs_upper[
+                (league_logs_upper['TEAM_ABBREVIATION'] == home) & 
+                (league_logs_upper['PLAYER_NAME'] == player_name) & 
+                (league_logs_upper['GAME_DATE'].isin(recent_game_dates_home))
+            ]
+            played_mins = player_logs['MIN'].tolist() if not player_logs.empty else []
+            total_mins = sum(played_mins) + 0 * (20 - len(played_mins))
+            avg_mpg = total_mins / 20.0 if len(recent_game_dates_home) > 0 else 0.0
             i['impact_score'] = get_impact_from_mpg(avg_mpg)
         
         adjust_home_ortg = sum(i['impact_score'] * i.get('ortg_delta', 0.0) for i in inj_home)
         adjust_home_drtg = sum(i['impact_score'] * i.get('drtg_delta', 0.0) for i in inj_home)
         adjust_home_nrtg = adjust_home_ortg - adjust_home_drtg
         
-        # Get recent player logs for away
-        recent_player_logs_away = league_logs_upper[
-            (league_logs_upper['TEAM_ABBREVIATION'] == away) & 
-            (league_logs_upper['GAME_DATE'] < ml_date_pd)
-        ].sort_values('GAME_DATE', ascending=False).head(20)
-        
         for i in inj_away:
             player_name = i['name']
-            player_mins = recent_player_logs_away[recent_player_logs_away['PLAYER_NAME'] == player_name]['MIN']
-            avg_mpg = player_mins.mean() if not player_mins.empty else 0.0
+            player_logs = league_logs_upper[
+                (league_logs_upper['TEAM_ABBREVIATION'] == away) & 
+                (league_logs_upper['PLAYER_NAME'] == player_name) & 
+                (league_logs_upper['GAME_DATE'].isin(recent_game_dates_away))
+            ]
+            played_mins = player_logs['MIN'].tolist() if not player_logs.empty else []
+            total_mins = sum(played_mins) + 0 * (20 - len(played_mins))
+            avg_mpg = total_mins / 20.0 if len(recent_game_dates_away) > 0 else 0.0
             i['impact_score'] = get_impact_from_mpg(avg_mpg)
         
         adjust_away_ortg = sum(i['impact_score'] * i.get('ortg_delta', 0.0) for i in inj_away)
