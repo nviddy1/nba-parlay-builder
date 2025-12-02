@@ -1099,22 +1099,13 @@ with tab_me:
                 team_logs = logs[logs["TEAM_ABBREVIATION"] == team_abbr].copy()
                 if team_logs.empty: continue
                 team_logs = team_logs.sort_values("GAME_DATE_DT", ascending=False).groupby("PLAYER_ID").head(max_window)
-                roster_df = get_team_roster(season_me, team_abbr)
-                if roster_df.empty:
-                    st.warning(f"Could not load roster for {team_abbr} in {season_me}.")
-                    continue
                 grp = team_logs.groupby(["PLAYER_ID", "PLAYER_NAME"])
                 for (pid, name), sub in grp:
                     min_series = pd.to_numeric(sub["MIN_NUM"], errors="coerce").dropna()
                     if len(min_series) < 5: continue
                     season_min = float(min_series.mean()); l5_min = float(min_series.head(5).mean()); min_diff = l5_min - season_min
                     if exclude_low_usage and (season_min < 15) and (l5_min < 18): continue
-                    # Get player position from roster
-                    pos_row = roster_df[roster_df["PLAYER_ID"] == pid]
-                    if pos_row.empty:
-                        player_pos = "SG"  # Fallback, but log warning if needed
-                    else:
-                        player_pos = pos_row["POSITION"].iloc[0]  # Assuming "POSITION" column exists; adjust if it's "POS" or similar
+                    player_pos = get_player_position(pid)
                     pos_def = team_pos_def[opp_team][player_pos] if opp_team in team_pos_def and player_pos in team_pos_def[opp_team] else None
                     stat_std_cache = {}
                     for stat in ALL_STATS:
