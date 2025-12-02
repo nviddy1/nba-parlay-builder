@@ -6,10 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from nba_api.stats.static import players, teams as teams_static
-from nba_api.stats.endpoints import (
-    playergamelog, leaguegamelog, commonteamroster, leaguedashplayerstats,
-    teamgamelog, boxscoretraditionalv2, playbyplayv2
-)
+from nba_api.stats.endpoints import playergamelog, leaguegamelog, commonteamroster, leaguedashplayerstats
 from rapidfuzz import process
 import requests
 from datetime import datetime, timedelta, date
@@ -22,11 +19,6 @@ try:
 except ImportError:
     xgb = None
     XGB_AVAILABLE = False
-@st.cache_data
-def get_team_abbrev_to_id():
-    return {t['abbreviation']: t['id'] for t in teams_static.get_teams()}
-
-team_abbrev_to_id = get_team_abbrev_to_id()
 TEAM_LOGOS = {
     "ATL": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
     "BOS": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
@@ -709,7 +701,7 @@ def extract_injuries_from_summary(summary: dict, home_abbr: str, away_abbr: str,
 def team_html(team):
     team_key = ABBREV_MAP.get(team, team); logo = TEAM_LOGOS.get(team_key, "")
     return f"<span style=\"display:inline-flex; align-items:center; gap:6px; vertical-align:middle;\"><img src=\"{logo}\" width=\"20\" style=\"border-radius:3px; vertical-align:middle;\" /><span style=\"vertical-align:middle;\">{team}</span></span>"
-tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_qh, tab_ml = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💨 Quick Hits", "💵 ML, Spread, & Totals"])
+tab_builder, tab_breakeven, tab_mc, tab_injury, tab_me, tab_matchups, tab_qh, tab_ml = st.tabs(["🧮 Parlay Builder", "🧷 Breakeven", "🎲 Monte Carlo Sim", "🩹 Injury Impact", "🔥 Matchup Exploiter","🛡️ Team Defense", "💨Quick Hits" "💵 ML, Spread, & Totals"])
 with tab_builder:
     fc1, fc2, fc3 = st.columns([1.2, 1, 1])
     with fc1:
@@ -1223,145 +1215,7 @@ with tab_matchups:
     st.divider()
     st.caption(f"Season {season} • Source: NBA Stats API • Regular-season team logs (per-game averages)")
 with tab_qh:
-    st.subheader("⚡ Quick Hits")
-    st.caption("Player averages for first quarter or first 3 minutes over last N games")
-  
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        season_qh = st.selectbox("Season", ["2025-26", "2024-25", "2023-24"], index=0, key="season_qh")
-        team_qh = st.selectbox("Team", TEAM_ABBRS, index=TEAM_ABBRS.index("PHI") if "PHI" in TEAM_ABBRS else 0, key="team_qh")
-    with col2:
-        last_n_qh = st.slider("Last N games", 5, 30, 10, key="last_n_qh")
-        time_filter_qh = st.selectbox("Time Filter", ["First Quarter", "First 3 Minutes"], index=0, key="time_qh")
-  
-    run_qh = st.button("Load Quick Hits", key="run_qh")
-  
-    if run_qh and team_qh:
-        team_id = team_abbrev_to_id.get(team_qh, 1610612745)  # Default PHI
-        try:
-            # Get last N game IDs: Use 'season' (not 'season_nullable')
-            gamelog = teamgamelog.TeamGameLog(
-                season=season_qh,  # e.g., '2025-26'
-                season_type_all_star='Regular Season',
-                team_id=team_id
-            )
-            df_gamelog = gamelog.get_data_frames()[0]
-            df_gamelog['GAME_DATE'] = pd.to_datetime(df_gamelog['GAME_DATE'])
-            recent_games = df_gamelog.nlargest(last_n_qh, 'GAME_DATE')['GAME_ID'].tolist()
-          
-            # Aggregate stats
-            player_stats = {'PLAYER_ID': [], 'PLAYER_NAME': [], 'PTS': [], 'REB': [], 'AST': []}
-            total_games = len(recent_games)
-          
-            for game_id in recent_games:
-                # Box score: Use .get_data_frames() for reliability
-                bs = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id)
-                # Returns list: [0]=home players, [1]=away players (or similar; concat and filter)
-                player_dfs = bs.get_data_frames()
-                all_players = pd.concat(player_dfs, ignore_index=True) if player_dfs else pd.DataFrame()
-                all_players = all_players[all_players['TEAM_ABBREVIATION'] == team_qh.upper()]
-              
-                if time_filter_qh == "First Quarter":
-                    # Correct columns: PTS_Q1, REB_Q1, AST_Q1
-                    for _, row in all_players.iterrows():
-                        pid = row['PLAYER_ID']
-                        name = row['PLAYER_NAME']
-                        pts = pd.to_numeric(row.get('PTS_Q1', 0), errors='coerce') or 0
-                        reb = pd.to_numeric(row.get('REB_Q1', 0), errors='coerce') or 0
-                        ast = pd.to_numeric(row.get('AST_Q1', 0), errors='coerce') or 0
-                        player_stats['PLAYER_ID'].append(pid)
-                        player_stats['PLAYER_NAME'].append(name)
-                        player_stats['PTS'].append(pts)
-                        player_stats['REB'].append(reb)
-                        player_stats['AST'].append(ast)
-                else:  # First 3 Minutes - Enhanced PBP aggregation
-                    pbp = playbyplayv2.PlayByPlayV2(game_id=game_id).get_data_frames()[0]
-                    # Filter: Period 1, clock starts at 12:00, first 3 min ~ clock > 9:00
-                    pbp['CLOCK_MIN'] = pd.to_numeric(pbp['PCTIMESTRING'].str.split(':').str[0], errors='coerce')
-                    first3_events = pbp[(pbp['PERIOD'] == 1) & (pbp['CLOCK_MIN'] > 9)].copy()
-                    
-                    # Aggregate by PLAYER1_ID (actor)
-                    player_first3 = {}
-                    for _, event in first3_events.iterrows():
-                        player_id = event.get('PLAYER1_ID')
-                        if pd.isna(player_id): continue
-                        if player_id not in player_first3:
-                            player_first3[player_id] = {'PTS': 0, 'REB': 0, 'AST': 0}
-                        
-                        event_type = event.get('EVENTMSGTYPE', 0)
-                        # PTS: Made field goal (1) or free throw (3), non-blocked
-                        if event_type in [1, 3] and event.get('EVENTNUM') % 2 == 0:  # Made (even EVENTNUM)
-                            points = 2 if event.get('ACTION_TYPE') in [1, 2] else 3  # FG/3PT simplified
-                            player_first3[player_id]['PTS'] += points
-                        # REB: Rebound event (5)
-                        elif event_type == 5:
-                            player_first3[player_id]['REB'] += 1
-                        # AST: Assist (8, but only if made shot follows; simplified to 8)
-                        elif event_type == 8:
-                            player_first3[player_id]['AST'] += 1
-                    
-                    # Map back to all_players
-                    for _, row in all_players.iterrows():
-                        pid = row['PLAYER_ID']
-                        name = row['PLAYER_NAME']
-                        stats = player_first3.get(pid, {'PTS': 0, 'REB': 0, 'AST': 0})
-                        player_stats['PLAYER_ID'].append(pid)
-                        player_stats['PLAYER_NAME'].append(name)
-                        player_stats['PTS'].append(stats['PTS'])
-                        player_stats['REB'].append(stats['REB'])
-                        player_stats['AST'].append(stats['AST'])
-          
-            if not player_stats['PLAYER_ID']:
-                st.warning("No player data found for the selected filters.")
-                st.stop()
-          
-            df_stats = pd.DataFrame(player_stats)
-            df_avg = df_stats.groupby(['PLAYER_ID', 'PLAYER_NAME']).agg({
-                'PTS': 'mean', 'REB': 'mean', 'AST': 'mean'
-            }).round(1).reset_index()
-          
-            # Team header with logo
-            team_logo = TEAM_LOGOS.get(team_qh, "")
-            st.markdown(f"""
-            <div style='text-align: center; margin-bottom: 20px;'>
-                <img src='{team_logo}' width='60' height='60' style='border-radius: 50%;' />
-                <h3 style='color: #fff; margin: 10px 0;'>{team_qh}</h3>
-                <p style='color: #aaa; font-size: 0.9rem;'>Averages over {total_games} games ({time_filter_qh})</p>
-            </div>
-            """, unsafe_allow_html=True)
-          
-            # Custom HTML table with headshots
-            html_table = """
-            <style>
-                table.quick-hits {border-collapse: collapse; width: 100%; background: #1e1e1e; border-radius: 8px; overflow: hidden;}
-                th {background: #333; color: #fff; padding: 12px; text-align: left; font-weight: 600;}
-                td {padding: 10px; border-bottom: 1px solid #444; color: #fff;}
-                img {border-radius: 4px; width: 40px; height: 40px;}
-            </style>
-            <table class='quick-hits'>
-                <thead><tr><th>Player</th><th>PTS</th><th>REB</th><th>AST</th></tr></thead>
-                <tbody>
-            """
-            for _, row in df_avg.iterrows():
-                pid = row['PLAYER_ID']
-                name = row['PLAYER_NAME']
-                pts = row['PTS']
-                reb = row['REB']
-                ast = row['AST']
-                headshot = get_player_headshot(pid)
-                html_table += f"""
-                <tr>
-                    <td><img src='{headshot}' onerror="this.src='https://a.espncdn.com/i/headshots/nba/players/full/{pid}.png'" /> {name}</td>
-                    <td>{pts}</td><td>{reb}</td><td>{ast}</td>
-                </tr>
-                """
-            html_table += "</tbody></table>"
-            st.markdown(html_table, unsafe_allow_html=True)
-          
-        except Exception as e:
-            st.error(f"Error loading data: {str(e)}")
-            st.info("Ensure nba_api is installed and up-to-date: pip install --upgrade nba_api")
-            st.info("If API errors persist, check rate limits or try a different season/team.")
+
 with tab_ml:
     st.subheader("💵 ML, Spread, & Totals Analyzer")
     st.caption("Projections for all games on the selected date. Click expanders for detailed efficiencies & injuries.")
