@@ -1177,6 +1177,9 @@ with tab_ml:
     team_nrtg = team_ortg - team_drtg
     team_poss = last_10_games.groupby("TEAM_ABBREVIATION")["poss"].mean()
     
+    # Filter for last 20 games for injury metrics
+    last_20_games = logs_recent.groupby('TEAM_ABBREVIATION').head(20)
+    
     for game_idx, game in enumerate(games_ml):
         home_raw = game["home"]
         away_raw = game["away"]
@@ -1200,7 +1203,7 @@ with tab_ml:
         proj_possessions = (poss_home + poss_away) / 2.0
         # Injuries
         summary = get_espn_game_summary(event_id)
-        inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
+        inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, last_20_games, league_logs_upper)
         nrtg_home_adj = nrtg_home + adjust_home_nrtg
         nrtg_away_adj = nrtg_away + adjust_away_nrtg
         nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
