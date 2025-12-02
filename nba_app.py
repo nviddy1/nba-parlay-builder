@@ -1200,39 +1200,13 @@ with tab_ml:
         else:
             return 1.0
     
-    def compute_player_deltas(team_logs_20, player_logs, team_abbr):
-        # Get unique game dates in last 20
-        recent_dates = team_logs_20[team_logs_20['TEAM_ABBREVIATION'] == team_abbr]['GAME_DATE'].unique()
-        
-        # Games played (MIN > 0)
-        played_logs = player_logs[player_logs['MIN'] > 0]
-        played_dates = set(played_logs['GAME_DATE'].unique())
-        
-        # Team stats with player
-        team_with = team_logs_20[
-            (team_logs_20['TEAM_ABBREVIATION'] == team_abbr) & 
-            (team_logs_20['GAME_DATE'].isin(played_dates))
-        ]
-        ortg_with = team_with['ortg'].mean() if not team_with.empty else 110.0
-        drtg_with = team_with['drtg'].mean() if not team_with.empty else 110.0
-        
-        # Games without player
-        without_dates = set(recent_dates) - played_dates
-        if len(without_dates) < 3:  # Require min 3 games without for reliable delta
-            return 0.0, 0.0
-        
-        team_without = team_logs_20[
-            (team_logs_20['TEAM_ABBREVIATION'] == team_abbr) & 
-            (team_logs_20['GAME_DATE'].isin(without_dates))
-        ]
-        ortg_without = team_without['ortg'].mean() if not team_without.empty else 110.0
-        drtg_without = team_without['drtg'].mean() if not team_without.empty else 110.0
-        
-        # Compute deltas
-        delta_ortg = ortg_without - ortg_with
-        delta_drtg = drtg_without - drtg_with
-        
-        return delta_ortg, delta_drtg
+    # Fallback for zero deltas (e.g., rookies/low-sample): modest imputation by position/role
+    def get_fallback_deltas(player_name):
+        # Simple heuristic: bigs/centers like Sarr/Hartenstein get small team shifts; guards/wings less
+        if 'sarr' in player_name.lower() or 'hartenstein' in player_name.lower():
+            return -1.5, +2.0  # Slight O hit, D anchor loss
+        # Add more players/roles as needed
+        return 0.0, 0.0
     
     for game_idx, game in enumerate(games_ml):
         home_raw = game["home"]
@@ -1260,13 +1234,10 @@ with tab_ml:
         inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, last_20_games, league_logs_upper)
         
         # Get recent game dates for home and away
-        recent_game_dates_home = last_20_games[last_20_games['TEAM_ABBREVIATION'] == home]['GAME_DATE'].unique()
-        recent_game_dates_away = last_20_games[last_20_games['TEAM_ABBREVIATION'] == away]['GAME_DATE'].unique()
+        recent_game_dates_home = last_20_games[last_20_games['TEAM_ABBREVIATION'] == home]['GAME_DATE'].unique()[:20]
+        recent_game_dates_away = last_20_games[last_20_games['TEAM_ABBREVIATION'] == away]['GAME_DATE'].unique()[:20]
         
-        # Override impacts and deltas based on recent MPG and compute deltas from splits
-        team_logs_home = last_20_games[last_20_games['TEAM_ABBREVIATION'] == home]
-        team_logs_away = last_20_games[last_20_games['TEAM_ABBREVIATION'] == away]
-        
+        # Override impacts based on recent MPG (including 0 for missed games) and re-compute adjustments
         for i in inj_home:
             player_name = i['name']
             player_logs = league_logs_upper[
@@ -1275,14 +1246,16 @@ with tab_ml:
                 (league_logs_upper['GAME_DATE'].isin(recent_game_dates_home))
             ]
             played_mins = player_logs['MIN'].tolist() if not player_logs.empty else []
-            total_mins = sum(played_mins) + 0 * (len(recent_game_dates_home) - len(played_mins))
-            avg_mpg = total_mins / len(recent_game_dates_home) if len(recent_game_dates_home) > 0 else 0.0
+            total_mins = sum(played_mins) + 0 * (20 - len(played_mins))
+            avg_mpg = total_mins / 20.0 if len(recent_game_dates_home) > 0 else 0.0
             i['impact_score'] = get_impact_from_mpg(avg_mpg)
+            # Debug: st.write(f"Debug: {player_name} (home) avg MPG: {avg_mpg:.1f}, impact: {i['impact_score']:.2f}")
             
-            # Compute deltas from with/without splits (no fallback)
-            delta_ortg, delta_drtg = compute_player_deltas(team_logs_home, player_logs, home)
-            i['ortg_delta'] = delta_ortg
-            i['drtg_delta'] = delta_drtg
+            # Fallback if deltas are zero
+            if i.get('ortg_delta', 0.0) == 0 and i.get('drtg_delta', 0.0) == 0:
+                fallback_ortg, fallback_drtg = get_fallback_deltas(player_name)
+                i['ortg_delta'] = fallback_ortg
+                i['drtg_delta'] = fallback_drtg
         
         adjust_home_ortg = sum(i['impact_score'] * i.get('ortg_delta', 0.0) for i in inj_home)
         adjust_home_drtg = sum(i['impact_score'] * i.get('drtg_delta', 0.0) for i in inj_home)
@@ -1296,14 +1269,16 @@ with tab_ml:
                 (league_logs_upper['GAME_DATE'].isin(recent_game_dates_away))
             ]
             played_mins = player_logs['MIN'].tolist() if not player_logs.empty else []
-            total_mins = sum(played_mins) + 0 * (len(recent_game_dates_away) - len(played_mins))
-            avg_mpg = total_mins / len(recent_game_dates_away) if len(recent_game_dates_away) > 0 else 0.0
+            total_mins = sum(played_mins) + 0 * (20 - len(played_mins))
+            avg_mpg = total_mins / 20.0 if len(recent_game_dates_away) > 0 else 0.0
             i['impact_score'] = get_impact_from_mpg(avg_mpg)
+            # Debug: st.write(f"Debug: {player_name} (away) avg MPG: {avg_mpg:.1f}, impact: {i['impact_score']:.2f}")
             
-            # Compute deltas from with/without splits (no fallback)
-            delta_ortg, delta_drtg = compute_player_deltas(team_logs_away, player_logs, away)
-            i['ortg_delta'] = delta_ortg
-            i['drtg_delta'] = delta_drtg
+            # Fallback if deltas are zero
+            if i.get('ortg_delta', 0.0) == 0 and i.get('drtg_delta', 0.0) == 0:
+                fallback_ortg, fallback_drtg = get_fallback_deltas(player_name)
+                i['ortg_delta'] = fallback_ortg
+                i['drtg_delta'] = fallback_drtg
         
         adjust_away_ortg = sum(i['impact_score'] * i.get('ortg_delta', 0.0) for i in inj_away)
         adjust_away_drtg = sum(i['impact_score'] * i.get('drtg_delta', 0.0) for i in inj_away)
@@ -1391,17 +1366,68 @@ with tab_ml:
     </div>
   </div>
   <div style='border:1px solid #333; padding:10px; border-radius:8px; background:#1e1e1e; text-align:center;'>
-    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Moneyline</div>
+    <div style='margin-bottom:6px; font-weight:600; font-size:0.9rem;'>Fair ML</div>
     <div style='display: flex; flex-direction: column; gap: 4px; font-size:0.9rem;'>
       <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
         <img src='{home_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
-        <span>{home}: {int(ml_home):+d}</span>
+        <span>{home}: {ml_home}</span>
       </div>
       <div style='display: flex; align-items: center; justify-content: center; gap: 4px;'>
         <img src='{away_logo}' width='16' height='16' style='border-radius: 2px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
-        <span>{away}: {int(ml_away):+d}</span>
+        <span>{away}: {ml_away}</span>
       </div>
     </div>
   </div>
 </div>
 """)
+        st.markdown(projected_html, unsafe_allow_html=True)
+        with st.expander(f"Expand: Efficiencies & Injuries ({len(inj_home) + len(inj_away)} total)"):
+            # Team strengths with logos
+            strength_html = textwrap.dedent(f"""
+<div style='margin-top:10px;'>
+  <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px;'>
+    <div style='display: flex; align-items: center; gap: 10px;'>
+      <img src='{home_logo}' width='32' height='32' style='border-radius: 4px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{home.lower()}.png'" />
+      <div>
+        <div style='font-weight:600; margin-bottom:8px;'>Home: {home}</div>
+        <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_home:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_home:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_home_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_home_nrtg:+.1f})</span></div>
+      </div>
+    </div>
+    <div style='display: flex; align-items: center; gap: 10px;'>
+      <img src='{away_logo}' width='32' height='32' style='border-radius: 4px;' onerror="this.src='https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/{away.lower()}.png'" />
+      <div>
+        <div style='font-weight:600; margin-bottom:8px;'>Away: {away}</div>
+        <div style='display:flex;'><span style='width:60px;'>ORTG:</span> <span style='font-weight:600;'>{ortg_away:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>DRTG:</span> <span style='font-weight:600;'>{drtg_away:.1f}</span></div>
+        <div style='display:flex;'><span style='width:60px;'>NRTG:</span> <span style='font-weight:600; color:#00c896;'>{nrtg_away_adj:.1f}</span> <span style='color:#aaa; font-size:0.8rem;'>(adj {adjust_away_nrtg:+.1f})</span></div>
+      </div>
+    </div>
+  </div>
+  <div style='margin-top:10px; font-weight:600; color:#00c896; font-size:1.1rem;'>Diff (Adj): {nrtg_diff_adj:+.1f} | Margin (w/ HCA): {est_margin:+.1f}</div>
+</div>
+""")
+            st.markdown(strength_html, unsafe_allow_html=True)
+            # Injuries (logos already in header, no need here)
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**{home} Out ({len(inj_home)} players):**")
+                if inj_home:
+                    for i in inj_home:
+                        ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                        st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
+                else:
+                    st.write("No key injuries.")
+                st.write(f"*NRTG Adj: {adjust_home_nrtg:+.1f} | ORTG/DRTG Adj: {adjust_home_ortg:+.1f}/{adjust_home_drtg:+.1f}*")
+            with col2:
+                st.write(f"**{away} Out ({len(inj_away)} players):**")
+                if inj_away:
+                    for i in inj_away:
+                        ret_str = i['return_date'].strftime('%b %d') if i['return_date'] else 'TBD'
+                        st.write(f"- {i['name']} (impact {i.get('impact_score', 1.0):.2f}, ΔORTG/ΔDRTG {i.get('ortg_delta', 0.0):+.1f}/{i.get('drtg_delta', 0.0):+.1f}, {i['status']}, {i['injury']}, return {ret_str})")
+                else:
+                    st.write("No key injuries.")
+                st.write(f"*NRTG Adj: {adjust_away_nrtg:+.1f} | ORTG/DRTG Adj: {adjust_away_ortg:+.1f}/{adjust_away_drtg:+.1f}*")
+        if game_idx < len(games_ml) - 1:
+            st.markdown("---")
