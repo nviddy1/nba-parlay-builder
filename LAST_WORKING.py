@@ -1154,22 +1154,52 @@ with tab_ml:
         st.warning("No games found for this date.")
         st.stop()
     season = get_current_season_str()
-    @st.cache_data(ttl=1800)  # Cache for 30min
+    @st.cache_data(ttl=1800) # Cache for 30min
     def get_game_data(season):
         logs_team = load_enhanced_team_logs(season)
         player_impacts = load_player_impact(season)
         league_logs_upper = load_league_player_logs_upper(season)
         margin_model = train_margin_model(season)
         total_model = train_total_model(season)
-        team_ortg = logs_team.groupby("TEAM_ABBREVIATION")["ortg"].mean()
-        team_drtg = logs_team.groupby("TEAM_ABBREVIATION")["drtg"].mean()
-        team_nrtg = team_ortg - team_drtg
-        team_poss = logs_team.groupby("TEAM_ABBREVIATION")["poss"].mean()
-        return logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss
-    logs_team, player_impacts, league_logs_upper, margin_model, total_model, team_ortg, team_drtg, team_nrtg, team_poss = get_game_data(season)
+        return logs_team, player_impacts, league_logs_upper, margin_model, total_model
+    logs_team, player_impacts, league_logs_upper, margin_model, total_model = get_game_data(season)
     if logs_team.empty:
         st.warning("No data available for this season yet.")
         st.stop()
+    
+    # Convert GAME_DATE to datetime for filtering
+    logs_team['GAME_DATE'] = pd.to_datetime(logs_team['GAME_DATE'])
+    league_logs_upper['GAME_DATE'] = pd.to_datetime(league_logs_upper['GAME_DATE'])
+    
+    # Compute recent metrics based on last 10 games before ml_date
+    import pandas as pd
+    ml_date_pd = pd.to_datetime(ml_date)
+    logs_recent = logs_team[logs_team['GAME_DATE'] < ml_date_pd].sort_values(['TEAM_ABBREVIATION', 'GAME_DATE'], ascending=[True, False])
+    last_10_games = logs_recent.groupby('TEAM_ABBREVIATION').head(10)
+    team_ortg = last_10_games.groupby("TEAM_ABBREVIATION")["ortg"].mean()
+    team_drtg = last_10_games.groupby("TEAM_ABBREVIATION")["drtg"].mean()
+    team_nrtg = team_ortg - team_drtg
+    team_poss = last_10_games.groupby("TEAM_ABBREVIATION")["poss"].mean()
+    
+    # Filter for last 20 games for injury metrics
+    last_20_games = logs_recent.groupby('TEAM_ABBREVIATION').head(20)
+    
+    def get_impact_from_mpg(mpg):
+        if mpg < 10:
+            return 0.15
+        elif mpg < 15:
+            return 0.25
+        elif mpg < 20:
+            return 0.45
+        elif mpg < 25:
+            return 0.6
+        elif mpg < 30:
+            return 0.85
+        elif mpg < 35:
+            return 1.0
+        else:
+            return 1.0
+    
     for game_idx, game in enumerate(games_ml):
         home_raw = game["home"]
         away_raw = game["away"]
@@ -1193,7 +1223,45 @@ with tab_ml:
         proj_possessions = (poss_home + poss_away) / 2.0
         # Injuries
         summary = get_espn_game_summary(event_id)
-        inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, logs_team, league_logs_upper)
+        inj_home, inj_away, adjust_home_nrtg, adjust_away_nrtg, adjust_home_ortg, adjust_away_ortg, adjust_home_drtg, adjust_away_drtg = extract_injuries_from_summary(summary, home, away, ml_date, player_impacts, last_20_games, league_logs_upper)
+        
+        # Get recent game dates for home and away
+        recent_game_dates_home = last_20_games[last_20_games['TEAM_ABBREVIATION'] == home]['GAME_DATE'].unique()[:20]
+        recent_game_dates_away = last_20_games[last_20_games['TEAM_ABBREVIATION'] == away]['GAME_DATE'].unique()[:20]
+        
+        # Override impacts based on recent MPG (including 0 for missed games) and re-compute adjustments
+        for i in inj_home:
+            player_name = i['name']
+            player_logs = league_logs_upper[
+                (league_logs_upper['TEAM_ABBREVIATION'] == home) & 
+                (league_logs_upper['PLAYER_NAME'] == player_name) & 
+                (league_logs_upper['GAME_DATE'].isin(recent_game_dates_home))
+            ]
+            played_mins = player_logs['MIN'].tolist() if not player_logs.empty else []
+            total_mins = sum(played_mins) + 0 * (20 - len(played_mins))
+            avg_mpg = total_mins / 20.0 if len(recent_game_dates_home) > 0 else 0.0
+            i['impact_score'] = get_impact_from_mpg(avg_mpg)
+        
+        adjust_home_ortg = sum(i['impact_score'] * i.get('ortg_delta', 0.0) for i in inj_home)
+        adjust_home_drtg = sum(i['impact_score'] * i.get('drtg_delta', 0.0) for i in inj_home)
+        adjust_home_nrtg = adjust_home_ortg - adjust_home_drtg
+        
+        for i in inj_away:
+            player_name = i['name']
+            player_logs = league_logs_upper[
+                (league_logs_upper['TEAM_ABBREVIATION'] == away) & 
+                (league_logs_upper['PLAYER_NAME'] == player_name) & 
+                (league_logs_upper['GAME_DATE'].isin(recent_game_dates_away))
+            ]
+            played_mins = player_logs['MIN'].tolist() if not player_logs.empty else []
+            total_mins = sum(played_mins) + 0 * (20 - len(played_mins))
+            avg_mpg = total_mins / 20.0 if len(recent_game_dates_away) > 0 else 0.0
+            i['impact_score'] = get_impact_from_mpg(avg_mpg)
+        
+        adjust_away_ortg = sum(i['impact_score'] * i.get('ortg_delta', 0.0) for i in inj_away)
+        adjust_away_drtg = sum(i['impact_score'] * i.get('drtg_delta', 0.0) for i in inj_away)
+        adjust_away_nrtg = adjust_away_ortg - adjust_away_drtg
+        
         nrtg_home_adj = nrtg_home + adjust_home_nrtg
         nrtg_away_adj = nrtg_away + adjust_away_nrtg
         nrtg_diff_adj = nrtg_home_adj - nrtg_away_adj
