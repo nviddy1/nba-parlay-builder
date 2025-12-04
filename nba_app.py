@@ -53,7 +53,7 @@ TEAM_LOGOS = {
 }
 ABBREV_MAP = {
     "GS": "GSW", "NO": "NOP", "UT": "UTA", "SA": "SAS", "LA": "LAL", "NY": "NYK", "WSH": "WAS",
-    "GSW": "GSW", "NOP": "NOP", "UTA": "UTA", "SAS": "SAS", "LAL": "LAL", "NYK": "NYK", "WAS": "WAS"
+    "GSW": "GSW", "NOP": "NOP", "UTA": "UTA", "UTAH": "UTA", "SAS": "SAS", "LAL": "LAL", "NYK": "NYK", "WAS": "WAS"
 }
 TEAM_COLORS = {
     "ATL": "#E03A3E","BOS": "#007A33","BKN": "#000000","CHA": "#1D1160","CHI": "#CE1141",
