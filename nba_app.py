@@ -48,7 +48,7 @@ TEAM_LOGOS = {
     "SAC": "https://a.espncdn.com/i/teamlogos/nba/500/sac.png",
     "SAS": "https://a.espncdn.com/i/teamlogos/nba/500/sa.png",
     "TOR": "https://a.espncdn.com/i/teamlogos/nba/500/tor.png",
-    "UTA": "https://a.espncdn.com/i/teamlogos/nba/500/utah.png",
+    "UTA": "https://a.espncdn.com/i/teamlogos/nba/500/uta.png",
     "WAS": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png"
 }
 ABBREV_MAP = {
